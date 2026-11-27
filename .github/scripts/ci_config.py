@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 # Groups whose tests run against a regtest dashd
-DASHD_GROUPS = {"spv"}
+DASHD_GROUPS = {"rpc", "spv"}
 ROOT = Path(__file__).resolve().parents[2]
 # Absolute, as cargo runs each crate's tests from that crate's directory
 DASHD_TEST_RETAIN_DIR = ROOT / "target" / "dashd-test-logs"
@@ -119,9 +119,12 @@ def verify_groups(args):
         github_error(f"No hardcoded group matrix found in {workflow_file}")
         return 1
 
-    actual = sorted(
-        name.strip().strip('"').strip("'") for name in match.group(1).split(",")
-    )
+    entries = [entry.strip().strip('"').strip("'") for entry in match.group(1).split(",")]
+    if not all(entry.strip() for entry in entries):
+        github_error(f"Empty group entry in the hardcoded matrix of {workflow_file}")
+        return 1
+
+    actual = sorted(group for entry in entries for group in entry.split())
 
     if actual != expected:
         github_error(

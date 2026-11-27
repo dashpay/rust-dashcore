@@ -121,13 +121,9 @@ pub enum SyncEvent {
     MasternodeStateUpdated {
         /// New masternode state height
         height: u32,
-        /// QRInfo processing result when this update came through the
-        /// QuorumValidation pipeline. `None` for Incremental (MnListDiff-only)
-        /// updates. Consumers that care about rotation cycle storage (e.g.
-        /// IS lock verification across rotation) can gate on
-        /// `result.all_fully_verified()` together with
-        /// `result.stored_cycle_height` to know which cycle was fully
-        /// verified and stored in `rotated_quorums_per_cycle` by this update.
+        /// QRInfo processing result, or `None` for a list-only update.
+        /// `stored_cycle_height` can describe a partial cycle; `complete_cycle_height`
+        /// reports when the engine holds every configured signing slot.
         qr_info_result: Option<QRInfoFeedResult>,
     },
 
@@ -185,6 +181,17 @@ pub enum SyncEvent {
     ForkDetected {
         /// Height of the last block both chains share
         fork_height: u32,
+    },
+
+    /// Storage read back data that fails its checksum or does not decode.
+    /// Reading a single header or filter header from a segment not in memory skips the
+    /// checksum, so corruption there is not detected.
+    ///
+    /// Emitted by: Any manager whose storage read fails with `StorageError::Corruption`
+    /// Consumed by: The client, which wipes the storage and syncs again
+    StorageCorrupted {
+        /// The corruption the storage reported
+        error: String,
     },
 
     /// A wallet needs blocks below the lowest stored header.
@@ -297,6 +304,9 @@ impl fmt::Display for SyncEvent {
             SyncEvent::ForkDetected {
                 fork_height,
             } => write!(f, "ForkDetected(height={})", fork_height),
+            SyncEvent::StorageCorrupted {
+                error,
+            } => write!(f, "StorageCorrupted({})", error),
             SyncEvent::HeadersBackfillNeeded {
                 height,
             } => write!(f, "HeadersBackfillNeeded(height={})", height),

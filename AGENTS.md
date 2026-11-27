@@ -18,7 +18,7 @@ Workspace members, as listed in the root `Cargo.toml` (package name in brackets 
 - `masternode-seeds-fetcher/`: the tool that fetches those seed lists.
 - `dash-spv-bench/`: sync benchmark harness for `dash-spv`.
 - `git-state/`: proc macros exposing the git state at compile time.
-- `rpc-client/` (`dashcore-rpc`), `rpc-json/` (`dashcore-rpc-json`), `rpc-integration-test/`: Dash Core JSON-RPC client, its types and its tests.
+- `rpc-client/` (`dashcore-rpc`), `rpc-json/` (`dashcore-rpc-json`): Dash Core JSON-RPC client and its types. The client's tests run against a regtest `dashd`.
 - `fuzz/` (`dash-fuzz`): honggfuzz targets.
 
 Outside the workspace, `contrib/` holds scripts.
@@ -35,7 +35,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 
 ### dashd integration tests
 
-`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for every `dash-spv` change. Never set `SKIP_DASHD_TESTS=1`.
+`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for a change that can affect sync, networking, storage or wallet behavior. Never set `SKIP_DASHD_TESTS=1`.
 
 - `just dash-spv::test [args]` downloads `dashd` and the regtest chains (cached in `~/.rust-dashcore-test/`) and runs the `dash-spv` tests against them.
 - To call cargo directly, load the environment first: `eval $(python3 contrib/setup-dashd.py)`.
@@ -44,14 +44,16 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 
 ## Branches and releases
 
-- Branch from `dev` and open every PR against `dev`. This includes fixes and docs.
-- `master` holds the latest release. Maintainers cut a `chore/release-vX.Y.Z` branch, merge it into `master` and tag `vX.Y.Z`. Don't target `master` or a release branch.
+- Branch from `dev` and open every PR except a release against `dev`. This includes fixes and docs.
+- `master` holds the latest release and takes only release PRs. Don't target a release branch.
+- To release, maintainers first merge the previous release's open `dev` PR, then cut a `chore/release-vX.Y.Z` branch from `dev`, run `git merge -s ours origin/master` so the PR merges into `master` without conflicts, set `X.Y.Z` in `Cargo.toml` if `dev` is on another version, add the `## X.Y.Z - YYYY-MM-DD` changelog section and open a PR into `master` with the `release` label. `Release Check` requires that section and a version above the latest tag, and rejects a PR an earlier release already lists or a changelog that drops a section `master` has. Merge with a merge commit, not a squash. The `Release` workflow then waits for approval in the `release` environment, tags `vX.Y.Z`, publishes the GitHub release and opens the PR that brings the changelog to `dev`, bumping `dev` to the next minor version unless it is already past the release.
+- A patch release is cut from `master` instead, cherry-picks fixes already merged into `dev` and sets its version in `Cargo.toml`. Fixing on `dev` first keeps everything `master` has on `dev`, which is what makes `-s ours` safe. If the previous release's `dev` PR is still open, `dev` is behind the patch and the job that opens the `dev` PR fails until it is merged and the job is rerun.
 - `CHANGELOG.md` is written from the merged PR titles when a release is cut. Don't edit it in a feature PR: CI fails a PR that touches it unless it carries the `release` label.
 
 ## Rust code style
 
 - Put every `use` at the top of its module. Only `mod` starts a new scope, so inside `#[cfg(test)] mod tests` the imports go at the top of `tests`. Never write a `use` inside a function, closure or block.
-- Don't write a fully qualified path to avoid an import. Write `use std::ptr;` and `ptr::null()`, not `std::ptr::null()`. Calling a method on an imported type (`Foo::new()`) is fine.
+- Don't write a fully qualified path to avoid an import. Write `use std::ptr;` and `ptr::null()`, not `std::ptr::null()`. A single qualifier is fine: a module or crate name (`ptr::null()`, `hex_conservative::decode_to_vec()`) or an imported type (`Foo::new()`).
 - Delete dead code instead of adding `#[allow(dead_code)]`. Git history keeps it. When a lint must be silenced, use `#[expect(lint, reason = "...")]` over `#[allow]`.
 - Give new items the most restrictive visibility that compiles: private, then `pub(super)` or `pub(crate)`, `pub` only when the item is public API.
 - Write numeric literals without type suffixes (`[2; 20]`, not `[2u8; 20]`) unless the compiler needs one.
@@ -89,7 +91,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 - Every fix comes with a regression test that fails without it.
 - Before adding a `#[test]`, look for an existing test with the same setup and extend it.
 - Test through the public API. Don't set internal fields or states by hand: a test that builds a state production never reaches proves nothing.
-- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
+- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `dashcore-rpc`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
 - Never skip or delete a failing test. `#[ignore]` needs a comment linking the issue that tracks the failure.
 
 ## Commits and pull requests

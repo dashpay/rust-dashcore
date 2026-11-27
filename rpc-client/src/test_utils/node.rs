@@ -2,11 +2,11 @@
 //!
 //! This provides utilities for managing a dashd instance and loading test wallet data.
 
+use crate::json as rpc_json;
+use crate::jsonrpc::simple_http::SimpleHttpTransport;
+use crate::jsonrpc::{Client as JsonRpcClient, Error as JsonRpcError};
+use crate::{Auth, Client, Error as RpcError, RpcApi};
 use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
-use dashcore_rpc::json as rpc_json;
-use dashcore_rpc::jsonrpc::simple_http::SimpleHttpTransport;
-use dashcore_rpc::jsonrpc::{Client as JsonRpcClient, Error as JsonRpcError};
-use dashcore_rpc::{Auth, Client, Error as RpcError, RpcApi};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -15,9 +15,12 @@ use std::io::Write as _;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tokio::process::Child;
+#[cfg(unix)]
+use tokio::process::Command;
 use tokio::time::{sleep, timeout};
 
 use super::fs_helpers::{copy_dir, copy_to_retain_dir};
@@ -86,7 +89,7 @@ pub enum TestChain {
 }
 
 impl TestChain {
-    pub(crate) fn variant_dir(self) -> &'static str {
+    pub fn variant_dir(self) -> &'static str {
         match self {
             TestChain::Full => "regtest-40000",
             TestChain::Minimal => "regtest-200",
@@ -216,6 +219,16 @@ pub struct DashCoreNode {
     process: Option<Child>,
     /// Set by the first [`DashCoreNode::start`]; later starts keep their ports.
     started: bool,
+    rpc: RpcConnections,
+}
+
+/// Connections to one dashd process, opened on first use and kept. A connection per call leaves a
+/// port in `TIME_WAIT` each time, and enough parallel tests then run out of local ports.
+#[derive(Default)]
+struct RpcConnections {
+    base: OnceLock<Client>,
+    /// Clones share one connection, whatever wallet path they use.
+    wallet: OnceLock<SimpleHttpTransport>,
 }
 
 impl DashCoreNode {
@@ -225,6 +238,7 @@ impl DashCoreNode {
             config,
             process: None,
             started: false,
+            rpc: RpcConnections::default(),
         }
     }
 
@@ -243,7 +257,7 @@ impl DashCoreNode {
 
     /// Has dashd load the datadir's wallet `name` when it starts, and makes it the wallet the
     /// node's RPC helpers use.
-    pub(crate) fn with_wallet(mut self, name: &str) -> Self {
+    pub fn with_wallet(mut self, name: &str) -> Self {
         self.config.wallet = name.to_string();
         self
     }
@@ -332,6 +346,8 @@ impl DashCoreNode {
 
     /// Launches dashd once and waits until it is ready.
     async fn launch(&mut self) -> Result<SocketAddr, StartFailure> {
+        // The new process has its own cookie and may have another port.
+        self.rpc = RpcConnections::default();
         tracing::info!("Starting dashd...");
         tracing::info!("  Binary: {:?}", self.config.dashd_path);
         tracing::info!("  Datadir: {:?}", self.config.datadir);
@@ -480,8 +496,13 @@ impl DashCoreNode {
     }
 
     /// Get an RPC client targeting a specific wallet.
-    pub(super) fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
-        let url = format!("http://127.0.0.1:{}/wallet/{}", self.config.rpc_port, wallet_name);
+    pub fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
+        let mut transport = self.rpc.wallet.get_or_init(|| self.wallet_transport()).clone();
+        transport.set_url_path(format!("/wallet/{}", wallet_name));
+        Client::from_jsonrpc(JsonRpcClient::with_transport(transport))
+    }
+
+    fn wallet_transport(&self) -> SimpleHttpTransport {
         let cookie_path = self.config.datadir.join("regtest/.cookie");
         assert!(
             cookie_path.exists(),
@@ -489,13 +510,23 @@ impl DashCoreNode {
             cookie_path.display()
         );
         let cookie = fs::read_to_string(&cookie_path).expect("failed to read rpc cookie");
-        let transport = SimpleHttpTransport::builder()
-            .url(&url)
+        SimpleHttpTransport::builder()
+            .url(&format!("http://127.0.0.1:{}", self.config.rpc_port))
             .expect("invalid rpc url")
             .cookie_auth(cookie.trim())
             .timeout(RPC_TIMEOUT)
-            .build();
-        Client::from_jsonrpc(JsonRpcClient::with_transport(transport))
+            .build()
+    }
+
+    /// The client of [`DashCoreNode::try_rpc_call`], or `None` while dashd has no cookie yet.
+    fn base_client(&self) -> Option<&Client> {
+        if let Some(client) = self.rpc.base.get() {
+            return Some(client);
+        }
+        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
+        let cookie_path = self.config.datadir.join("regtest/.cookie");
+        let client = Client::new(&url, Auth::CookieFile(cookie_path)).ok()?;
+        Some(self.rpc.base.get_or_init(|| client))
     }
 
     /// Load a wallet by name, creating it only if dashd reports it doesn't exist.
@@ -535,7 +566,7 @@ impl DashCoreNode {
         let addr = Address::dummy(dashcore::Network::Regtest, 0);
         match client.generate_to_address(0, &addr) {
             Ok(_) => true,
-            Err(dashcore_rpc::Error::JsonRpc(dashcore_rpc::jsonrpc::Error::Rpc(ref e)))
+            Err(RpcError::JsonRpc(JsonRpcError::Rpc(ref e)))
                 if e.message.contains("not available") =>
             {
                 false
@@ -707,6 +738,25 @@ impl DashCoreNode {
         tracing::info!("Disconnected peer {}", addr);
     }
 
+    /// Freezes dashd with `SIGSTOP`, or resumes it with `SIGCONT`. Its sockets stay open, so
+    /// its peers see a silent connection rather than a disconnect.
+    #[cfg(unix)]
+    pub async fn set_paused(&self, paused: bool) {
+        let pid = self.process.as_ref().and_then(Child::id).expect("dashd is not running");
+        let signal = if paused {
+            "-STOP"
+        } else {
+            "-CONT"
+        };
+        let status = Command::new("kill")
+            .args([signal, &pid.to_string()])
+            .status()
+            .await
+            .expect("failed to run kill");
+        assert!(status.success(), "kill {signal} {pid} failed: {status}");
+        tracing::info!("Set paused={} on dashd", paused);
+    }
+
     /// Enable or disable all P2P network activity on this node.
     pub fn set_network_active(&self, active: bool) {
         let client = self.rpc_client();
@@ -759,14 +809,7 @@ impl DashCoreNode {
     /// Uses the base URL (no wallet path) which works for all non-wallet RPCs.
     /// Useful during DKG orchestration where transient failures are expected.
     pub fn try_rpc_call(&self, method: &str, params: &[serde_json::Value]) -> Option<Value> {
-        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
-        let cookie_path = self.config.datadir.join("regtest/.cookie");
-        if !cookie_path.exists() {
-            return None;
-        }
-        let auth = Auth::CookieFile(cookie_path);
-        let client = Client::new(&url, auth).ok()?;
-        client.call(method, params).ok()
+        self.base_client()?.call(method, params).ok()
     }
 
     pub fn datadir(&self) -> &Path {
@@ -828,6 +871,86 @@ impl WalletFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader, Read};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::thread;
+    use test_case::test_case;
+
+    /// Answers each JSON-RPC request on its own port with the request's path, keeps connections
+    /// open like dashd, and counts them in `connections`.
+    fn serve_rpc(connections: Arc<AtomicUsize>) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                connections.fetch_add(1, Ordering::SeqCst);
+                thread::spawn(move || {
+                    let mut stream = BufReader::new(stream.unwrap());
+                    loop {
+                        let mut length = 0;
+                        let mut path = None;
+                        loop {
+                            let mut line = String::new();
+                            if stream.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            path = path.or(line.split(' ').nth(1).map(str::to_string));
+                            if let Some(n) = line.strip_prefix("Content-Length: ") {
+                                length = n.trim().parse().unwrap();
+                            }
+                            if line == "\r\n" {
+                                break;
+                            }
+                        }
+                        let mut body = vec![0; length];
+                        stream.read_exact(&mut body).unwrap();
+                        let id = serde_json::from_slice::<Value>(&body).unwrap()["id"].clone();
+                        let reply = serde_json::json!({"result": path, "error": null, "id": id})
+                            .to_string();
+                        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}", reply.len());
+                        write!(stream.get_mut(), "{head}\r\n\r\n{reply}").unwrap();
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    #[test_case(|node| vec![node.try_rpc_call("ping", &[]).unwrap()], &["/"]; "base")]
+    #[test_case(
+        |node| vec![node.rpc_client().call("ping", &[]).unwrap()],
+        &["/wallet/default"];
+        "primary wallet"
+    )]
+    #[test_case(
+        |node| {
+            let wallets = ["a", "b"].map(|name| node.rpc_client_for_wallet(name));
+            wallets.iter().map(|wallet| wallet.call("ping", &[]).unwrap()).collect()
+        },
+        &["/wallet/a", "/wallet/b"];
+        "several wallets"
+    )]
+    fn rpc_calls_share_a_connection(call: fn(&DashCoreNode) -> Vec<Value>, paths: &[&str]) {
+        let connections = Arc::new(AtomicUsize::new(0));
+        let datadir = tempfile::tempdir().unwrap();
+        fs::create_dir(datadir.path().join("regtest")).unwrap();
+        fs::write(datadir.path().join("regtest/.cookie"), "__cookie__:secret").unwrap();
+        let node = DashCoreNode::with_config(DashCoreConfig {
+            dashd_path: PathBuf::new(),
+            datadir: datadir.path().to_path_buf(),
+            wallet: "default".to_string(),
+            p2p_port: 0,
+            rpc_port: serve_rpc(connections.clone()),
+            extra_args: Vec::new(),
+        });
+
+        for _ in 0..5 {
+            assert_eq!(call(&node), paths);
+        }
+        assert_eq!(connections.load(Ordering::SeqCst), 1);
+    }
 
     /// dashd 23.1.0's log lines for a taken P2P port, a taken onion target port and a taken RPC
     /// port.

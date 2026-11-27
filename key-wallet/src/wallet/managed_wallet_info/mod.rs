@@ -543,26 +543,13 @@ impl ManagedWalletInfo {
     /// it is skipped. Call this only for block-context transactions
     /// (`InBlock` / `InChainLockedBlock`); mempool spends must never be recorded
     /// (see the field doc — an unconfirmed spend may never be mined).
-    ///
-    /// Returns whether the map actually changed (a new outpoint, or an existing
-    /// one re-observed at a different height). The map is persisted wallet
-    /// state, so callers must surface a `true` as a state modification —
-    /// otherwise a consumer that persists only on reported modifications could
-    /// drop the recorded spend across a restart and reopen #649 for it.
-    pub(crate) fn record_observed_spends(
-        &mut self,
-        tx: &Transaction,
-        height: CoreBlockHeight,
-    ) -> bool {
+    pub(crate) fn record_observed_spends(&mut self, tx: &Transaction, height: CoreBlockHeight) {
         if tx.is_coin_base() {
-            return false;
+            return;
         }
-        let mut changed = false;
         for input in &tx.input {
-            changed |=
-                self.observed_spent_outpoints.insert(input.previous_output, height) != Some(height);
+            self.observed_spent_outpoints.insert(input.previous_output, height);
         }
-        changed
     }
 
     /// Evict [`Self::observed_spent_outpoints`] entries at or below the finality

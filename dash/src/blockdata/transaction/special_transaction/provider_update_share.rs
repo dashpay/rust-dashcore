@@ -94,18 +94,24 @@ impl Decodable for ProviderUpdateSharePayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blockdata::transaction::special_transaction::MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE;
+    use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateSharePayloadType;
     use crate::consensus::{deserialize, serialize};
 
-    #[test]
-    fn layout() {
-        let payload = ProviderUpdateSharePayload {
+    fn payload(payload_sig: Vec<u8>) -> ProviderUpdateSharePayload {
+        ProviderUpdateSharePayload {
             version: 1,
             pro_tx_hash: Txid::from_byte_array([0x11; 32]),
             share_index: 3,
             script_reward: ScriptBuf::from_bytes(vec![0x51]),
             inputs_hash: InputsHash::from_byte_array([0x22; 32]),
-            payload_sig: vec![0x33; 65],
-        };
+            payload_sig,
+        }
+    }
+
+    #[test]
+    fn layout() {
+        let payload = payload(vec![0x33; 65]);
         let mut want = vec![0x01, 0x00];
         want.extend([0x11; 32]);
         want.extend([0x03, 0x00, 0x01, 0x51]);
@@ -116,5 +122,15 @@ mod tests {
         assert_eq!(serialize(&payload), want);
         assert_eq!(payload.size(), want.len());
         assert_eq!(deserialize::<ProviderUpdateSharePayload>(&want).unwrap(), payload);
+    }
+
+    #[test]
+    fn max_signed_size_reserves_the_largest_ecdsa_signature() {
+        let unsigned = ProviderUpdateSharePayloadType(payload(vec![]));
+        let signed = ProviderUpdateSharePayloadType(payload(vec![0x33; 65]));
+
+        assert_eq!(unsigned.max_signed_size(), unsigned.size() + MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE);
+        assert_eq!(signed.max_signed_size(), unsigned.max_signed_size());
+        assert!(signed.max_signed_size() >= signed.size());
     }
 }

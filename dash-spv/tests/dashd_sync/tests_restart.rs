@@ -1,19 +1,23 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use test_case::test_case;
 
 use dash_spv::Network;
 use dash_spv::{SyncEvent, SyncProgress};
 
 use super::helpers::{
-    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete, PeerTracker,
+    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete,
+    wait_for_wallet_synced, PeerTracker,
 };
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{create_and_start_client, TestContext};
-use dash_spv::test_utils::{create_test_wallet, TestChain};
+use dash_spv::test_utils::{create_test_wallet, default_test_account_options, TestChain};
 
 /// Verify sync state is identical after stopping and restarting with same storage.
 #[tokio::test]
@@ -271,4 +275,86 @@ async fn test_clear_storage_stops_running_client() {
     wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
+}
+
+/// Verify a storage file corrupted while the client is stopped is wiped and synced again.
+#[test_case("block_headers/segment_000000.dat"; "block headers")]
+#[test_case("filter_headers/segment_000000.dat"; "filter headers")]
+#[test_case("filters/segment_000000.dat"; "filters")]
+#[test_case("blocks/segment_000000.dat"; "blocks")]
+#[tokio::test]
+async fn test_restart_corruption_resyncs(file: &str) {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+    drop(client_handle);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let path = ctx.client_config.storage_path.join(file);
+    let original = corrupt(&path);
+
+    // A fresh wallet rescans from genesis, so the client downloads every wiped file again.
+    let (wallet, wallet_id) = create_test_wallet(&ctx.dashd.wallet.mnemonic, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+    ctx.assert_wallet_synced(&client_handle.client.progress().await, &wallet, &wallet_id).await;
+    assert_eq!(fs::read(&path).unwrap(), original, "Corrupted file not synced again");
+}
+
+/// Verify a storage file corrupted while the client runs is wiped and synced again.
+#[test_case("block_headers/segment_000000.dat"; "block headers")]
+#[test_case("filters/segment_000000.dat"; "filters")]
+#[test_case("blocks/segment_000000.dat"; "blocks")]
+#[tokio::test]
+async fn test_runtime_corruption_resyncs(file: &str) {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let height = ctx.dashd.initial_height;
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, height).await;
+
+    let path = ctx.client_config.storage_path.join(file);
+    let original = corrupt(&path);
+
+    // Adding the wallet again rescans the chain from genesis, so the client reads the corrupted file.
+    {
+        let mut wallet = ctx.wallet.write().await;
+        wallet.remove_wallet(&ctx.wallet_id).unwrap();
+        wallet
+            .create_wallet_from_mnemonic(
+                &ctx.dashd.wallet.mnemonic,
+                0,
+                default_test_account_options(),
+            )
+            .unwrap();
+    }
+
+    tokio::time::timeout(SYNC_TIMEOUT, async {
+        while !matches!(
+            client_handle.sync_event_receiver.recv().await.unwrap(),
+            SyncEvent::StorageCorrupted { .. }
+        ) {}
+    })
+    .await
+    .expect("Corruption not detected");
+
+    wait_for_wallet_synced(&ctx.wallet, &ctx.wallet_id, height).await;
+    wait_for_sync(&mut client_handle.progress_receiver, height).await;
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(fs::read(&path).unwrap(), original, "Corrupted file not synced again");
+}
+
+/// Flips a bit of the file at `path` and returns its original bytes.
+fn corrupt(path: &Path) -> Vec<u8> {
+    let original = fs::read(path).unwrap();
+    let mut corrupted = original.clone();
+    corrupted[0] ^= 1;
+    fs::write(path, corrupted).unwrap();
+    original
 }

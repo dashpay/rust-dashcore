@@ -58,9 +58,10 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
 ], optional = true }
 tracing-appender = { version = "0.2", optional = true }
-chrono = { workspace = true, features = ["default"], optional = true }
+time = { workspace = true, optional = true }
 
 # Utilities
+blake3 = { workspace = true }
 rand = { workspace = true }
 hex-conservative = { workspace = true }
 
@@ -119,7 +120,7 @@ path = "src/lib.rs"
 
 [features]
 cli = ["logging", "dep:clap", "tokio/rt-multi-thread", "tokio/signal"]
-logging = ["dep:chrono", "dep:tracing-appender", "dep:tracing-subscriber"]
+logging = ["dep:time", "dep:tracing-appender", "dep:tracing-subscriber"]
 test-utils = [
     "logging",
     "tokio/process",
@@ -127,6 +128,7 @@ test-utils = [
     "key-wallet-manager/test-utils",
     "dep:tempfile",
     "dep:dashcore-rpc",
+    "dashcore-rpc/test-utils",
 ]
 
 [lints]

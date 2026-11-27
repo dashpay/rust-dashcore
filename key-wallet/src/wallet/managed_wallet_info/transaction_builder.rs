@@ -330,7 +330,9 @@ impl TransactionBuilder {
     /// The builder must also be given a placeholder payload via
     /// [`Self::set_special_payload`]: the same variant with every
     /// selection-dependent field (inputs hash, payload signature) zeroed, so
-    /// coin selection prices the payload bytes into the fee. After selection
+    /// coin selection prices the payload bytes into the fee. A ProUpSharedRegTx
+    /// or ProDisTx placeholder must carry dummy signatures of the final count,
+    /// since its payload doesn't record how many it will carry. After selection
     /// reserves the chosen inputs, `finalize_payload` receives the unsigned
     /// transaction — inputs chosen and BIP-69 sorted, placeholder payload
     /// still attached — and returns the finalized payload, which replaces the

@@ -215,7 +215,7 @@ mod tests {
         NetworkMessage::GetCFilters(GetCFilters {
             filter_type: 0,
             start_height: start,
-            stop_hash: BlockHash::dummy(9),
+            stop_hash: BlockHash::dummy(start),
         })
     }
 
@@ -243,7 +243,7 @@ mod tests {
         mock.send(get_cfilters(0)).await;
         assert_eq!(mock.sent_messages().await.len(), 1);
 
-        mock.release_request(RequestKey::CFilters(0)).await;
+        mock.release_request(RequestKey::CFilters(BlockHash::dummy(0))).await;
         assert_eq!(mock.requests_in_play().await, 0);
 
         mock.send(get_cfilters(0)).await;

@@ -172,7 +172,14 @@ impl EcdsaSecretKey {
     /// Draws a random scalar from the thread RNG.
     #[cfg(feature = "rand")]
     pub fn generate() -> Self {
-        Self(secp256k1::SecretKey::new(&mut rand::rng()).into())
+        Self::generate_with(&mut rand::rng())
+    }
+
+    /// Draws a random scalar from `rng`, as `secp256k1::SecretKey::new` does.
+    /// A seeded `rng` yields a secret key only when its seed is secret and has full entropy.
+    #[cfg(feature = "rand")]
+    pub fn generate_with<R: rand::Rng + rand::CryptoRng + ?Sized>(rng: &mut R) -> Self {
+        Self(secp256k1::SecretKey::new(rng).into())
     }
 }
 
@@ -305,11 +312,29 @@ impl EcdsaRecSignature {
 #[cfg(test)]
 mod tests {
     use hex_conservative::hex;
+    #[cfg(feature = "rand")]
+    use rand::rngs::StdRng;
+    #[cfg(feature = "rand")]
+    use rand::{Rng, SeedableRng};
 
     use super::*;
 
     // A DER signature with `SIGHASH_ALL` appended.
     const SIG_HEX: &str = "3045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c01";
+
+    /// A seeded key matches `secp256k1::SecretKey::new` and consumes the same randomness.
+    #[cfg(feature = "rand")]
+    #[test]
+    fn generate_with_matches_secp256k1_for_a_seeded_rng() {
+        let mut ours = StdRng::seed_from_u64(7);
+        let mut theirs = StdRng::seed_from_u64(7);
+
+        let key = EcdsaSecretKey::generate_with(&mut ours);
+        let expected = secp256k1::SecretKey::new(&mut theirs);
+
+        assert_eq!(*key.to_bytes(), expected.to_secret_bytes());
+        assert_eq!(ours.random::<u64>(), theirs.random::<u64>());
+    }
 
     /// Formatting flags apply to the whole encoding, as for a string.
     #[test]

@@ -117,56 +117,6 @@ impl ManagedPlatformAccount {
         }
     }
 
-    /// Add credits to a specific address balance
-    ///
-    /// Returns the new credit balance for the address.
-    /// If the address was previously unfunded (balance 0) and becomes funded,
-    /// and a `KeySource` is provided, the address will be marked as used
-    /// and the gap limit will be maintained.
-    pub fn add_address_credit_balance(
-        &mut self,
-        address: PlatformP2PKHAddress,
-        amount: u64,
-        key_source: Option<&KeySource>,
-    ) -> u64 {
-        let current = self.address_balances.get(&address).copied().unwrap_or(0);
-        let was_unfunded = current == 0;
-        let new_balance = current.saturating_add(amount);
-        let is_now_funded = new_balance > 0;
-
-        self.address_balances.insert(address, new_balance);
-        // Add the amount to the total (saturating to handle overflow)
-        self.credit_balance = self.credit_balance.saturating_add(amount);
-
-        // If address became funded and we have a key source, update address pool
-        if was_unfunded && is_now_funded {
-            if let Some(ks) = key_source {
-                self.mark_and_maintain_gap_limit(&address, ks);
-            }
-        }
-
-        new_balance
-    }
-
-    /// Remove credits from a specific address balance
-    ///
-    /// Uses saturating subtraction - balance will not go below zero.
-    /// Returns the new credit balance for the address.
-    pub fn remove_address_credit_balance(
-        &mut self,
-        address: PlatformP2PKHAddress,
-        amount: u64,
-    ) -> u64 {
-        let current = self.address_balances.get(&address).copied().unwrap_or(0);
-        // Only subtract what was actually removed (may be less due to saturating)
-        let actual_removed = current.min(amount);
-        let new_balance = current.saturating_sub(amount);
-        self.address_balances.insert(address, new_balance);
-        // Subtract only what was actually removed from the total
-        self.credit_balance = self.credit_balance.saturating_sub(actual_removed);
-        new_balance
-    }
-
     /// Recalculate total credit balance from address balances
     pub fn recalculate_credit_balance(&mut self) {
         self.credit_balance = self.address_balances.values().sum();
@@ -402,22 +352,6 @@ mod tests {
         assert_eq!(account.address_credit_balance(&addr), 500);
         assert_eq!(account.total_credit_balance(), 500);
         assert_eq!(account.duff_balance(), 0); // 500 credits = 0 duffs (integer division)
-
-        // Add to address credit balance
-        let new_balance = account.add_address_credit_balance(addr, 500, None);
-        assert_eq!(new_balance, 1000);
-        assert_eq!(account.total_credit_balance(), 1000);
-        assert_eq!(account.duff_balance(), 1); // 1000 credits = 1 duff
-
-        // Add more
-        let new_balance = account.add_address_credit_balance(addr, 200, None);
-        assert_eq!(new_balance, 1200);
-        assert_eq!(account.total_credit_balance(), 1200);
-
-        // Remove from address credit balance
-        let new_balance = account.remove_address_credit_balance(addr, 100);
-        assert_eq!(new_balance, 1100);
-        assert_eq!(account.total_credit_balance(), 1100);
 
         // Update address balance directly (replacing existing)
         account.set_address_credit_balance(addr, 600, None);

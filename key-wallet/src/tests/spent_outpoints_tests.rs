@@ -10,7 +10,7 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::reservation::ReservationToken;
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::managed_account::ManagedCoreFundsAccount;
-use crate::test_utils::TestWalletContext;
+use crate::test_utils::{in_block, TestWalletContext};
 use crate::transaction_checking::{
     BlockInfo, TransactionCheckResult, TransactionContext, TransactionType,
 };
@@ -63,14 +63,6 @@ fn claim_on(ctx: &TestWalletContext, outpoint: &OutPoint) -> Option<Option<Txid>
 
 fn second_account(ctx: &TestWalletContext) -> &ManagedCoreFundsAccount {
     &ctx.managed_wallet.accounts.standard_bip44_accounts[&1]
-}
-
-fn in_block(height: u32) -> TransactionContext {
-    TransactionContext::InBlock(BlockInfo::new(
-        height,
-        BlockHash::from([height as u8; 32]),
-        1_700_000_000,
-    ))
 }
 
 /// A transaction spending `inputs` and paying `address`.

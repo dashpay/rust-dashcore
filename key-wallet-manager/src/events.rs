@@ -210,8 +210,9 @@ pub enum WalletEvent {
         /// back with `ManagedWalletInfo::lock_outpoint` on load.
         locked_outpoints: Vec<OutPoint>,
     },
-    /// An InstantSend lock was applied to a previously-seen off-chain
-    /// wallet-relevant transaction.
+    /// An InstantSend lock was applied to an off-chain wallet-relevant
+    /// transaction: one seen before, or one that arrived with its lock, in
+    /// which case this follows its `TransactionDetected`.
     TransactionInstantLocked {
         /// ID of the affected wallet.
         wallet_id: WalletId,

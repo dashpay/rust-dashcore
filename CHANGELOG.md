@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.46.1 - 2026-11-23
+
+### Highlights
+
+- **InstantSend locks decided by the masternode engine:** a lock is verified only against a stored rotation cycle that may sign it, kept pending while its quorum is missing and dropped once a complete cycle refutes it, instead of waiting out its TTL (#1419, #1418, #1293, #1324).
+
+### Added
+
+- `InstantLock::hash`, `InstantLock::lock_inputs` and `BlsSecretKey::sign_digest` in `dashcore` and `dashcore-crypto` (#1418) @lklimek
+
+### Changed
+
+- Replace the unmaintained `chrono` with `time`, so rotated `dash-spv` log file names are stamped in UTC instead of local time (#1428) @xdustinface
+
+### Fixed
+
+- **Breaking:** the masternode list engine owns which stored cycles may sign InstantSend locks and when a cycle is complete. The InstantSend manager drops a refuted lock and keeps an undecided one pending. `ValidationError::MissingQuorumData` is new and `QRInfoFeedResult` gains `complete_cycle_height`. The engine snapshot format changes, so the first start after upgrading syncs the masternode lists once (#1419) @lklimek
+- **Breaking:** refuse a `QRInfo` whose served `lastCommitmentPerIndex` entry is not in the list at its tip with the same entry hash, with the new `QuorumValidationError::CommitmentNotInList` (#1324) @PastaPastaPasta
+- Read each quarter's ChainLock of a rotated quorum from the coinbase of its work block instead of the unverified `quorumsCLSigs` (#1293) @PastaPastaPasta
+- Validate every received header batch for continuity, PoW and difficulty before routing it, so an unchecked header can no longer truncate the stored chain (#1304) @ZocoLini
+- Don't strand header segments when the tip segment reopens (#1339) @xdustinface
+- Keep the headers target at or above the stored tip (#1353) @xdustinface
+- Apply a peer change when writing the target height fails (#1449) @PastaPastaPasta
+- Time out the peer reader's ping and pong writes (#1340) @ZocoLini
+- Mark addresses used on an InstantSend backfill (#1447) @PastaPastaPasta
+- Check every account before a late lock backfills a record (#1454) @PastaPastaPasta
+- Update the funding account's record of a spend without change when its InstantSend lock, block or ChainLock arrives (#1399) @romchornyi
+- Re-emit a record a rescan finds owning more outputs (#1326) @PastaPastaPasta
+- Return the next index of an exhausted single-pool account (#1341) @ZocoLini
+- Reject an account xpub another account already uses (#1321) @ZocoLini
+- Use only the first Platform HTTPS entry, as Dash Core does (#1423) @PastaPastaPasta
+- Count the unsigned ProUpShareTx and shared ProRegTx signatures in `max_signed_size` (#1424) @PastaPastaPasta
+
 ## 0.46.0 - 2026-11-13
 
 ### Highlights

@@ -1,4 +1,4 @@
-use crate::error::SyncResult;
+use crate::error::{StorageError, SyncResult};
 use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
@@ -53,6 +53,15 @@ impl SyncManagerTaskContext {
     pub(super) fn emit_sync_events(&self, events: impl IntoIterator<Item = SyncEvent>) {
         for event in events {
             self.emit_sync_event(event);
+        }
+    }
+
+    /// Emits [`SyncEvent::StorageCorrupted`] when `error` is a storage corruption.
+    fn report_corruption(&self, error: &SyncError) {
+        if let SyncError::Storage(StorageError::Corruption(error)) = error {
+            self.emit_sync_event(SyncEvent::StorageCorrupted {
+                error: error.clone(),
+            });
         }
     }
 }
@@ -257,6 +266,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(e) => {
                             tracing::error!("{} error handling message: {}", identifier, e);
+                            context.report_corruption(&e);
                             let error_event = SyncEvent::ManagerError {
                                 manager: identifier,
                                 error: e.to_string(),
@@ -283,6 +293,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling event: {}", identifier, e);
+                                    context.report_corruption(&e);
                                 }
                             }
                         }
@@ -315,6 +326,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                                 }
                                 Err(e) => {
                                     tracing::error!("{} error handling network event: {}", identifier, e);
+                                    context.report_corruption(&e);
                                 }
                             }
                         }
@@ -339,6 +351,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                         }
                         Err(e) => {
                             tracing::error!("{} tick error: {}", identifier, e);
+                            context.report_corruption(&e);
                         }
                     }
                 }

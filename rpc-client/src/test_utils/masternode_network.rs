@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dashcore::sml::llmq_type::LLMQType;
+use crate::RpcApi;
 use dashcore::BlockHash;
-use dashcore_rpc::RpcApi;
+use dashcore::sml::llmq_type::LLMQType;
 use serde::Deserialize;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -21,8 +21,8 @@ use tokio::time;
 use tracing::{debug, info, warn};
 
 use super::fs_helpers::copy_dir;
-use super::node::find_available_port;
-use super::{retain_test_dir, DashCoreConfig, DashCoreNode, WalletFile};
+use super::node::{DashCoreConfig, find_available_port};
+use super::{DashCoreNode, WalletFile, retain_test_dir};
 
 /// Metadata for a pre-generated masternode network, deserialized from network.json.
 #[derive(Debug, Deserialize)]
@@ -255,9 +255,8 @@ impl MasternodeTestContext {
             mn.set_mocktime(mocktime);
         }
 
-        info!("Network ready: controller at height {}, mocktime={}", expected_height, mocktime);
-
-        Some(MasternodeTestContext {
+        // Built before the waits because `Drop` retains the test data when one of them panics.
+        let ctx = MasternodeTestContext {
             controller,
             masternodes,
             metadata,
@@ -265,7 +264,13 @@ impl MasternodeTestContext {
             wallet,
             expected_height,
             mocktime,
-        })
+        };
+        ctx.wait_for_sync();
+        ctx.wait_for_masternodes_ready().await;
+
+        info!("Network ready: controller at height {}, mocktime={}", expected_height, mocktime);
+
+        Some(ctx)
     }
 
     pub fn bump_mocktime(&mut self, seconds: u64) {
@@ -311,6 +316,33 @@ impl MasternodeTestContext {
         }
     }
 
+    /// Wait for every masternode to report the `READY` state.
+    ///
+    /// dashd updates the state asynchronously after connecting a block, so a synced masternode
+    /// can still reject its own service address.
+    async fn wait_for_masternodes_ready(&self) {
+        let timeout = Duration::from_secs(60);
+        let start = Instant::now();
+
+        for (mn, mn_info) in self.masternodes.iter().zip(&self.metadata.masternodes) {
+            let client = mn.rpc_client_for_wallet("");
+            loop {
+                let status: Result<Value, _> = client.call("masternode", &["status".into()]);
+                if status.as_ref().is_ok_and(|s| s["state"] == "READY") {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < timeout,
+                    "{} not READY after {:?}, last status: {:?}",
+                    mn_info.datadir,
+                    timeout,
+                    status
+                );
+                time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
     /// Wait for masternodes to reach a specific DKG phase for the given quorum type and hash.
     ///
     /// Returns true if enough members reached the phase within the timeout.
@@ -332,26 +364,25 @@ impl MasternodeTestContext {
         while start.elapsed() < timeout {
             let mut member_count = 0;
             for mn in &self.masternodes {
-                if let Some(status) = mn.try_rpc_call("quorum", &["dkgstatus".into()]) {
-                    if let Some(sessions) = status.get("session").and_then(|s| s.as_array()) {
-                        for session in sessions {
-                            let session_type = session.get("llmqType").and_then(|t| t.as_str());
-                            if session_type != Some(llmq_type) {
-                                continue;
-                            }
-                            let qs = session.get("status").unwrap_or(session);
-                            let hash_matches =
-                                qs.get("quorumHash").and_then(|h| h.as_str()) == Some(quorum_hash);
-                            let phase_matches =
-                                qs.get("phase").and_then(|p| p.as_u64()) == Some(phase);
-                            let messages_match = check_received_messages.is_none_or(|field| {
-                                qs.get(field).and_then(|v| v.as_u64()).unwrap_or(0)
-                                    >= check_received_messages_count
-                            });
-                            if hash_matches && phase_matches && messages_match {
-                                member_count += 1;
-                                break;
-                            }
+                if let Some(status) = mn.try_rpc_call("quorum", &["dkgstatus".into()])
+                    && let Some(sessions) = status.get("session").and_then(|s| s.as_array())
+                {
+                    for session in sessions {
+                        let session_type = session.get("llmqType").and_then(|t| t.as_str());
+                        if session_type != Some(llmq_type) {
+                            continue;
+                        }
+                        let qs = session.get("status").unwrap_or(session);
+                        let hash_matches =
+                            qs.get("quorumHash").and_then(|h| h.as_str()) == Some(quorum_hash);
+                        let phase_matches = qs.get("phase").and_then(|p| p.as_u64()) == Some(phase);
+                        let messages_match = check_received_messages.is_none_or(|field| {
+                            qs.get(field).and_then(|v| v.as_u64()).unwrap_or(0)
+                                >= check_received_messages_count
+                        });
+                        if hash_matches && phase_matches && messages_match {
+                            member_count += 1;
+                            break;
                         }
                     }
                 }

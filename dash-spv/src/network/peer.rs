@@ -28,6 +28,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
+    task,
 };
 use tokio_stream::StreamExt;
 use tokio_util::bytes::BytesMut;
@@ -36,7 +37,7 @@ use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
-use crate::network::costs::{as_sent, Ledger};
+use crate::network::costs::{as_sent, Ledger, HEADERS2_RESP_BYTES};
 use crate::network::manager::{InboundMessage, NetworkState};
 use crate::network::transport::{encrypt_message, TransportPreference, V2Decoder};
 use crate::{error::NetworkResult, NetworkError};
@@ -89,7 +90,7 @@ const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const PING_INTERVAL: Duration = Duration::from_secs(120);
 /// A new peer's in-flight byte cap until the controller has measured it.
-pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
+pub const INITIAL_CAP_BYTES: u64 = 2 * HEADERS2_RESP_BYTES;
 
 /// Counts bytes read, globally and per peer, to size the in-flight budgets from
 /// measured throughput.
@@ -277,12 +278,14 @@ pub struct PeerHandle {
     id: PeerId,
     writer: Arc<Mutex<PeerWriter>>,
     ledger: Arc<Ledger>,
-    /// Response bytes this peer can have in flight before they queue (its
-    /// bandwidth-delay product), sized by the controller from its byte rate and
-    /// service time.
+    /// Response bytes this peer can have in flight, sized by the controller from the rate
+    /// it serves at.
     cap: Arc<AtomicU64>,
     /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
     serving_rate: Arc<AtomicU64>,
+    /// Bytes/s this peer served over its last two seconds of serving all it could, 0 before.
+    /// A rough stand-in for `serving_rate` while that is still being measured.
+    served: Arc<AtomicU64>,
     headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
     token: CancellationToken,
@@ -301,8 +304,16 @@ impl PeerHandle {
         self.serving_rate.load(Ordering::Relaxed)
     }
 
+    pub(super) fn served(&self) -> u64 {
+        self.served.load(Ordering::Relaxed)
+    }
+
     pub fn in_flight_bytes(&self) -> u64 {
         self.ledger.in_flight_bytes()
+    }
+
+    pub(super) async fn silent_for(&self) -> Duration {
+        self.ledger.silent_for().await
     }
 
     pub fn cap(&self) -> u64 {
@@ -313,15 +324,22 @@ impl PeerHandle {
         self.token.is_cancelled()
     }
 
+    /// Holds back every write to the peer until the returned guard drops.
+    #[cfg(test)]
+    pub(super) async fn hold_writes(&self) -> impl Sized + '_ {
+        self.writer.lock().await
+    }
+
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // The sync layer sends a plain `getheaders`, since it does not know the peer.
         // The reader decompresses `Headers2` back to `Headers`.
         let msg = as_sent(msg, self.headers2);
 
-        self.ledger.charge(&msg).await;
-
         let write = async {
             let mut writer = self.writer.lock().await;
+            // Charged under the writer lock, since filter replies settle in the order their
+            // requests are written.
+            self.ledger.charge(&msg).await;
             writer.write_message(&msg).await
         };
         let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
@@ -412,6 +430,10 @@ impl ConnectedPeer {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
     }
 
+    pub(super) fn set_served(&self, bytes_per_sec: u64) {
+        self.handle.served.store(bytes_per_sec, Ordering::Relaxed);
+    }
+
     /// A handshaken connection `id` over a loopback socket, with no reader running.
     /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
@@ -436,6 +458,8 @@ impl ConnectedPeer {
         state: Arc<NetworkState>,
     ) -> (Self, OwnedWriteHalf) {
         let (link, far) = test_link().await;
+        // A test writes in small pieces, which Nagle would hold back for a delayed ACK.
+        far.set_nodelay(true).expect("loopback nodelay");
         let (mut far_read, far_write) = far.into_split();
         tokio::spawn(async move { io::copy(&mut far_read, &mut io::sink()).await });
         let (reader, bytes, partial) = peer_reader(link.reader, link.codec, state.clone());
@@ -462,6 +486,7 @@ impl ConnectedPeer {
                 ledger,
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
+                served: Arc::new(AtomicU64::new(0)),
                 headers2: false,
                 token,
             },
@@ -622,6 +647,7 @@ impl DisconnectedPeer {
                 "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
+            state.bans.ban(self.addr, Ban::MissingServices).await;
             return Err(NetworkError::ConnectionFailed(format!(
                 "peer {} lacks required services {}",
                 self.addr, required_services
@@ -690,6 +716,7 @@ impl DisconnectedPeer {
                 ledger,
                 cap,
                 serving_rate: Arc::new(AtomicU64::new(0)),
+                served: Arc::new(AtomicU64::new(0)),
                 headers2,
                 token,
             },
@@ -754,16 +781,21 @@ fn spawn_reader(
                             }
                         }
                         NetworkMessage::Headers2(compressed) => {
-                            match CompressionState::default()
-                                .process_headers_with_hashes(&compressed.headers)
-                            {
-                                Ok(headers) => {
+                            // X11 is CPU-bound, so it must not hold an async worker.
+                            let decompressed = task::spawn_blocking(move || {
+                                CompressionState::default()
+                                    .process_headers_with_hashes(&compressed.headers)
+                            })
+                            .await;
+
+                            match decompressed {
+                                Ok(Ok(headers)) => {
                                     let msg = InboundMessage::new_headers(headers);
                                     if inbound.send(PeerEvent::Message(addr, msg)).is_err() {
                                         break;
                                     }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     tracing::warn!(
                                         target: "dash_spv::network",
                                         "headers2 from {} failed to decompress: {}",
@@ -771,6 +803,15 @@ fn spawn_reader(
                                         e
                                     );
                                     state.bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        target: "dash_spv::network",
+                                        "headers2 task for {} failed: {}",
+                                        addr,
+                                        e
+                                    );
                                     break;
                                 }
                             }
@@ -789,7 +830,7 @@ fn spawn_reader(
     });
 }
 
-fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
+pub(super) fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
     VersionMessage::new(
@@ -838,7 +879,11 @@ async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> Net
 #[cfg(test)]
 mod tests {
     use std::io::{Error as IoError, ErrorKind};
+    use std::pin::pin;
 
+    use dashcore::network::message_filter::{CFilter, GetCFilters};
+    use dashcore::BlockHash;
+    use futures::FutureExt;
     use test_case::test_case;
 
     use super::*;
@@ -898,5 +943,37 @@ mod tests {
         let mut src = BytesMut::from(&[ping.clone(), ping].concat()[..n]);
         while codec.decode(&mut src).unwrap().is_some() {}
         codec.partial.load(Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn concurrent_filter_requests_are_charged_in_the_order_they_are_written() {
+        let id = PeerId::for_test(([127, 0, 0, 1], 9999).into(), 0);
+        let peer = ConnectedPeer::for_test(id).await.handle();
+        let request = |n: u32| {
+            NetworkMessage::GetCFilters(GetCFilters {
+                filter_type: 0,
+                start_height: n,
+                stop_hash: BlockHash::dummy(n),
+            })
+        };
+        let (delayed, overtaking) = (request(1), request(2));
+
+        let writes = peer.hold_writes().await;
+        let mut delayed = pin!(peer.send(&delayed));
+        assert!(delayed.as_mut().now_or_never().is_none(), "another write is in progress");
+        drop(writes);
+        peer.send(&overtaking).await.expect("loopback send");
+        delayed.await.expect("loopback send");
+        assert!(peer.in_flight_bytes() > 0);
+
+        for n in [2, 1] {
+            let reply = NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(n),
+                filter: Vec::new(),
+            });
+            peer.ledger.settle(&reply, 100).await;
+        }
+        assert_eq!(peer.in_flight_bytes(), 0);
     }
 }

@@ -1021,6 +1021,8 @@ mod test {
 
     use super::message_network::{Reject, RejectReason, VersionMessage};
     use super::{CommandString, NetworkMessage, RawNetworkMessage, *};
+    use std::collections::BTreeSet;
+
     use crate::bip152::BlockTransactionsRequest;
     use crate::blockdata::block::{self, Block};
     use crate::blockdata::script::ScriptBuf;
@@ -1163,7 +1165,7 @@ mod test {
             NetworkMessage::GetBlockTxn(GetBlockTxn {
                 txs_request: BlockTransactionsRequest {
                     block_hash: hash_x11([11u8; 32]).into(),
-                    indexes: vec![0, 1, 2, 3, 10, 3002],
+                    indexes: BTreeSet::from([0, 1, 2, 3, 10, 3002]),
                 },
             }),
             NetworkMessage::BlockTxn(blocktxn),

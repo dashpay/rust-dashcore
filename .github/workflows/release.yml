@@ -1,0 +1,87 @@
+name: Release
+
+# Tags and publishes the release a merged release PR puts on `master`, then opens the PR that
+# brings it to `dev`. Each step skips what already exists, so a failed run can be rerun.
+
+on:
+  push:
+    branches: [master]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Tag and release
+    # Waits until a required reviewer of the `release` environment approves the run.
+    environment: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the workspace version
+        id: version
+        run: |
+          version=$(python3 .github/scripts/release.py version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Creates the tag on the pushed commit too, unless it already exists.
+      - name: Tag and create the GitHub release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "The v$VERSION release already exists"
+            exit 0
+          fi
+          python3 .github/scripts/release.py notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+
+  bump:
+    name: Bring the release to dev
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: dev
+
+      # `master` holds the latest release, so its changelog has every section `dev` has.
+      - name: Copy the released changelog and bump the version
+        id: bump
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git show FETCH_HEAD:CHANGELOG.md > CHANGELOG.md
+          python3 .github/scripts/release.py bump "$VERSION"
+
+      # Opens no PR when `dev` already matches.
+      - name: Open the pull request
+        uses: peter-evans/create-pull-request@v8.1.3
+        with:
+          # PRs opened with `github.token` start no workflows. A token from the secret lets CI run.
+          token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          base: dev
+          branch: ${{ steps.bump.outputs.branch }}
+          commit-message: ${{ steps.bump.outputs.title }}
+          title: ${{ steps.bump.outputs.title }}
+          body: ${{ steps.bump.outputs.body }}
+          labels: release
+          add-paths: |
+            Cargo.toml
+            CHANGELOG.md

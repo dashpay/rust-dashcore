@@ -134,10 +134,6 @@ async fn asset_lock_credit_output_to_identity_registration_address_matches() {
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
     assert_matched_account_type(&result, AccountTypeToCheck::IdentityRegistration);
-    assert_eq!(
-        result.total_received_for_credit_conversion, ASSET_LOCK_VALUE,
-        "asset-lock credit-output value flows into credit conversion, not spendable balance",
-    );
 }
 
 #[tokio::test]

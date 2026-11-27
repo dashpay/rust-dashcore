@@ -7,15 +7,18 @@ pub(crate) use super::account_checker::TransactionCheckResult;
 use super::account_checker::{AccountMatch, DerivedAddressInfo};
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
+use crate::account::AccountType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::transaction_record::{InputDetail, TransactionRecord};
+use crate::managed_account::ManagedAccountRef;
 use crate::wallet::managed_wallet_info::locked_outpoints::masternode_collateral;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Address, Amount, OutPoint, SignedAmount};
+use dashcore::{Address, Amount, OutPoint, SignedAmount, Txid};
+use std::collections::HashMap;
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -135,8 +138,83 @@ impl ManagedWalletInfo {
                         .updated_records
                         .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
                     result.updated_records.push(record);
-                    result.state_modified = true;
                 }
+            }
+        }
+    }
+
+    /// Returns the matches in `matches` whose account holds no record of `txid`.
+    fn matches_without_record(&self, matches: &[AccountMatch], txid: &Txid) -> Vec<AccountMatch> {
+        matches
+            .iter()
+            .filter(|m| {
+                self.accounts
+                    .get_by_account_type_match(&m.account_type_match)
+                    .is_some_and(|account| !account.transactions().contains_key(txid))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Whether the funds account of `account_match` holds `txid` finalized without a record or a
+    /// summary. Such an account tells a new output by its address being unused, so it must not
+    /// settle before it confirms.
+    fn finalized_without_summary(&self, account_match: &AccountMatch, txid: &Txid) -> bool {
+        matches!(
+            self.accounts.get_by_account_type_match(&account_match.account_type_match),
+            Some(ManagedAccountRef::Funds(account)) if account.keys().finalized_without_summary(txid)
+        )
+    }
+
+    /// Marks the addresses the matches in `result` involve as used and checks `tx` again until
+    /// nothing new is derived. Without `include_recorded`, only accounts holding no record of `tx`
+    /// take part. With it, funds accounts holding `tx` finalized without a summary are left out.
+    /// Then reports each derived address as its pool now holds it.
+    fn use_addresses_until_settled(
+        &mut self,
+        wallet: &Wallet,
+        tx: &Transaction,
+        relevant_types: &[AccountTypeToCheck],
+        result: &mut TransactionCheckResult,
+        include_recorded: bool,
+    ) {
+        let txid = tx.txid();
+        loop {
+            let matches = if include_recorded {
+                let settles = |m: &&AccountMatch| !self.finalized_without_summary(m, &txid);
+                result.affected_accounts.iter().filter(settles).cloned().collect()
+            } else {
+                self.matches_without_record(&result.affected_accounts, &txid)
+            };
+            if !self.use_involved_addresses(wallet, &matches, &mut result.new_addresses) {
+                break;
+            }
+            let rechecked = self.accounts.check_transaction(tx, relevant_types);
+            result.affected_accounts = rechecked.affected_accounts;
+            result.total_received = rechecked.total_received;
+            result.total_sent = rechecked.total_sent;
+        }
+        self.refresh_reported_addresses(&mut result.new_addresses);
+    }
+
+    /// Replaces each entry of `new_addresses` with its account's current info, which a later
+    /// settle round may have marked used.
+    fn refresh_reported_addresses(&self, new_addresses: &mut [DerivedAddressInfo]) {
+        if new_addresses.is_empty() {
+            return;
+        }
+        let accounts: HashMap<AccountType, ManagedAccountRef<'_>> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .map(|account| (account.managed_account_type().to_account_type(), account))
+            .collect();
+        for reported in new_addresses {
+            let current = accounts.get(&reported.account_type).and_then(|account| {
+                account.managed_account_type().get_address_info(&reported.info.address)
+            });
+            if let Some(current) = current {
+                reported.info = current;
             }
         }
     }
@@ -252,7 +330,6 @@ impl ManagedWalletInfo {
         if !result.updated_records.is_empty() {
             result.is_relevant = true;
             result.is_new_transaction = false;
-            result.state_modified = true;
         }
     }
 }
@@ -302,8 +379,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         if let Some(collateral) = locked {
             result.locked_outpoints.push(collateral);
-            // The lock set is persisted wallet state.
-            result.state_modified = true;
         }
         if flags_changed && update_balance {
             self.update_balance();
@@ -346,13 +421,7 @@ impl ManagedWalletInfo {
             None
         };
         if let Some(height) = block_height {
-            // The observed-spent map is persisted wallet state: growing it is a
-            // state modification in its own right, even when the tx is
-            // otherwise irrelevant — losing an entry across a restart would
-            // reopen #649 for that coin.
-            if self.record_observed_spends(tx, height) {
-                result.state_modified = true;
-            }
+            self.record_observed_spends(tx, height);
         }
 
         // A final arrival settles its inputs whether or not this transaction
@@ -365,9 +434,6 @@ impl ManagedWalletInfo {
         // unconditional.
         if update_state && (context.confirmed() || context.is_instant_send()) {
             let sweep = self.sweep_conflicts(tx, &context);
-            if !sweep.is_empty() {
-                result.state_modified = true;
-            }
             result.swept_transactions = sweep.txids;
             result.released_outpoints = sweep.released_outpoints;
         }
@@ -410,23 +476,21 @@ impl ManagedWalletInfo {
                 // A chainlocked tx may have had its full record dropped
                 // under the default feature config — `transaction_is_finalized`
                 // catches that case via `finalized_txids` and the in-map
-                // record check covers `InBlock`.
-                let already_confirmed = result.affected_accounts.iter().any(|am| {
-                    let Some(account) =
-                        self.accounts.get_by_account_type_match(&am.account_type_match)
-                    else {
-                        return false;
-                    };
-                    if account.transaction_is_finalized(&txid) {
-                        return true;
-                    }
-                    account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())
+                // record check covers `InBlock`. Every account is asked, since an
+                // account whose chainlocked spend has settled no longer matches it.
+                let already_confirmed = self.accounts.all_accounts().into_iter().any(|account| {
+                    account.transaction_is_finalized(&txid)
+                        || account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())
                 });
                 if already_confirmed {
                     return result;
                 }
                 // A stale full delivery must leave the lock-only UTXO notification available.
                 self.instant_send_locks.insert(txid);
+                // Extend a backfilled account's windows and check again before recording it, as on
+                // first sight, so its record holds every output. An account already holding the
+                // record only changes context; its derivations travel with the block's new record.
+                self.use_addresses_until_settled(wallet, tx, &relevant_types, &mut result, false);
                 // Mark UTXOs as IS-locked and update the transaction context.
                 // An account can match (its address pool detects the tx) without
                 // already holding a record — backfill via `record_transaction`
@@ -463,7 +527,6 @@ impl ManagedWalletInfo {
                 if update_balance {
                     self.update_balance();
                 }
-                result.state_modified = true;
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -472,26 +535,10 @@ impl ManagedWalletInfo {
             }
         }
 
-        if is_new {
-            // Marking the addresses a transaction pays as used can extend the
-            // window over its own further outputs. Extend before recording and
-            // check again until nothing new is derived, so it is recorded
-            // whole. After the first round, a round derives only when it
-            // marked a further address of this transaction used, and the
-            // transaction has finitely many.
-            while self.use_involved_addresses(
-                wallet,
-                &result.affected_accounts,
-                &mut result.new_addresses,
-            ) {
-                let rechecked = self.accounts.check_transaction(tx, &relevant_types);
-                result.affected_accounts = rechecked.affected_accounts;
-                result.total_received = rechecked.total_received;
-                result.total_sent = rechecked.total_sent;
-                result.total_received_for_credit_conversion =
-                    rechecked.total_received_for_credit_conversion;
-            }
-        }
+        // Using a paid address can extend the window over further outputs of `tx`, so settle
+        // before recording or confirming. The loop ends: each further round marks another
+        // output's address of `tx` used.
+        self.use_addresses_until_settled(wallet, tx, &relevant_types, &mut result, true);
 
         // Process each affected account
         for account_match in result.affected_accounts.clone() {
@@ -512,10 +559,9 @@ impl ManagedWalletInfo {
                     &external_final_parents,
                 );
                 result.new_records.push(record);
-                result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                let confirmation = account.confirm_transaction_with_observed_spends(
+                let confirmed = account.confirm_transaction_with_observed_spends(
                     tx,
                     &account_match,
                     context.clone(),
@@ -524,9 +570,7 @@ impl ManagedWalletInfo {
                     &self.spent_claims,
                     &external_final_parents,
                 );
-                result.state_modified |= confirmation.coins_changed;
-                if let Some(record) = confirmation.record {
-                    result.state_modified = true;
+                if let Some(record) = confirmed {
                     if existed_before {
                         result.updated_records.push(record);
                     } else {
@@ -568,13 +612,16 @@ impl ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::account::derivation::AccountDerivation;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
     use crate::managed_account::address_pool::{
-        DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
+        AddressPoolType, DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT,
+        DEFAULT_INTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT,
     };
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
+    use crate::managed_account::ManagedCoreKeysAccount;
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
     use crate::transaction_checking::TransactionType;
@@ -584,6 +631,8 @@ mod tests {
     use crate::wallet::{ManagedWalletInfo, Wallet};
     use crate::{AccountType, Network};
     use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+    use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::blockdata::transaction::Transaction;
     use dashcore::ephemerealdata::chain_lock::ChainLock;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -591,6 +640,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::mem;
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1720,7 +1770,6 @@ mod tests {
             .await;
         assert!(is_result.is_relevant);
         assert!(!is_result.is_new_transaction, "Account 0 still holds the record");
-        assert!(is_result.state_modified);
 
         // Account 0 was already known: classified as updated.
         assert_eq!(is_result.updated_records.len(), 1);
@@ -1830,10 +1879,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(
-            backfilled.record.is_some(),
-            "Should return Some when backfilling a missing record"
-        );
+        assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
         let record = account.transactions().get(&txid).expect("Should have backfilled record");
@@ -1892,7 +1938,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(confirmed.record.is_some(), "Should return Some when confirming unconfirmed tx");
+        assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
@@ -4094,7 +4140,6 @@ mod tests {
             )
             .await;
         assert!(!result.is_new_transaction);
-        assert!(result.state_modified);
         assert_eq!(result.new_records.len(), 1);
         assert_eq!(result.new_records[0].account_type, account_type);
         let corrected = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
@@ -4158,6 +4203,14 @@ mod tests {
         ))
     }
 
+    fn chain_locked(height: u32, byte: u8) -> TransactionContext {
+        TransactionContext::InChainLockedBlock(BlockInfo::new(
+            height,
+            BlockHash::from_slice(&[byte; 32]).unwrap(),
+            1_700_000_000,
+        ))
+    }
+
     fn owned_output_count(record: &TransactionRecord) -> usize {
         record
             .output_details
@@ -4175,57 +4228,67 @@ mod tests {
     async fn test_redelivered_transaction_owning_a_newly_derived_output_is_updated() {
         let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
-        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let addresses = bip44_receive_addresses(&ctx, 3 * gap as u32 + 2);
 
-        // Pays index 1 and index 2*gap: the second is past the window even
+        // Pays index 1, 2*gap and 3*gap: the second is past the window even
         // after the first extends it to 1+gap.
-        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap], &addresses[3 * gap]], 40_000);
         let first = ctx.check_transaction(&early, in_block(100, 1)).await;
         assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
 
         // Uses index gap, which extends the window over index 2*gap.
         let later = paying(2, &[&addresses[gap]], 7_000);
         ctx.check_transaction(&later, in_block(101, 2)).await;
+        assert!(!ctx.bip44_account().contains_address(&addresses[3 * gap]));
 
+        // Using index 2*gap extends the window over 3*gap on the same delivery.
         let again = ctx.check_transaction(&early, in_block(100, 1)).await;
         assert!(!again.is_new_transaction);
-        assert_eq!(again.total_received, 80_000);
+        assert_eq!(again.total_received, 120_000);
         assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
         let updated = &again.updated_records[0];
-        assert_eq!(owned_output_count(updated), 2);
-        assert_eq!(updated.net_amount, 80_000);
+        assert_eq!(owned_output_count(updated), 3);
+        assert_eq!(updated.net_amount, 120_000);
         assert_eq!(updated.direction, TransactionDirection::Incoming);
-        assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
+        assert_eq!(ctx.transaction(&early.txid()).net_amount, 120_000, "stored record");
         let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
-        assert_eq!(credited, 2);
+        assert_eq!(credited, 3);
 
         // Nothing new to learn the third time: no event.
         let settled = ctx.check_transaction(&early, in_block(100, 1)).await;
         assert!(settled.updated_records.is_empty());
     }
 
-    /// A transaction's own window extension can reveal its further outputs:
-    /// it pays index 1, 1+gap and 1+2*gap, and each owned output extends the
-    /// window over the next. It is recorded whole on first sight, and the
-    /// rescan that re-delivers its block finds nothing to correct.
+    /// A transaction paying index 1, 1+gap, 1+2*gap and so on is recorded whole on first sight,
+    /// each paid address is reported once and used, and a rescan finds nothing to correct.
     #[tokio::test]
     async fn test_transaction_owning_outputs_its_own_extension_derives_is_recorded_whole() {
-        let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
-        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 2);
-        let tx = paying(1, &[&addresses[1], &addresses[1 + gap], &addresses[1 + 2 * gap]], 40_000);
+        for outputs in [3, 40] {
+            let mut ctx = TestWalletContext::new_random();
+            let addresses = bip44_receive_addresses(&ctx, ((outputs - 1) * gap + 2) as u32);
+            let paid: Vec<&Address> = (0..outputs).map(|k| &addresses[1 + k * gap]).collect();
+            let tx = paying(1, &paid, 40_000);
+            let total = 40_000 * outputs as i64;
 
-        let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(first.total_received, 120_000);
-        assert_eq!(first.new_records.len(), 1);
-        assert_eq!(first.new_records[0].net_amount, 120_000);
-        assert_eq!(owned_output_count(&first.new_records[0]), 3);
-        assert_eq!(ctx.transaction(&tx.txid()).net_amount, 120_000, "stored record");
-        let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
-        assert_eq!(credited, 3);
+            let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
+            assert_eq!(first.total_received, total as u64);
+            assert_eq!(first.new_records.len(), 1);
+            assert_eq!(first.new_records[0].net_amount, total);
+            assert_eq!(owned_output_count(&first.new_records[0]), outputs);
+            assert_eq!(ctx.transaction(&tx.txid()).net_amount, total, "stored record");
+            let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
+            assert_eq!(credited, outputs);
+            for address in &paid[1..] {
+                let reported: Vec<_> =
+                    first.new_addresses.iter().filter(|d| &d.info.address == *address).collect();
+                assert_eq!(reported.len(), 1, "derived once");
+                assert!(reported[0].info.is_used(), "reported as the pool holds it");
+            }
 
-        let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert!(again.updated_records.is_empty());
+            let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
+            assert!(again.updated_records.is_empty());
+        }
     }
 
     /// The same on the change chain: the far output is recorded as `Change`.
@@ -4249,6 +4312,106 @@ mod tests {
 
         let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
         assert!(again.updated_records.is_empty());
+    }
+
+    /// An account that matches a known transaction only at its InstantSend
+    /// lock or its block records it as on first sight: whole, with every
+    /// address the transaction pays marked used and the window extended.
+    #[tokio::test]
+    async fn test_backfill_at_a_lock_or_block_marks_paid_addresses_used() {
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        for block in [None, Some(in_block(100, 4)), Some(in_chain_locked_block(100, 4))] {
+            let mut ctx = TestWalletContext::new_random();
+            let addresses = bip44_receive_addresses(&ctx, 3 * gap as u32 + 2);
+            let bip32_xpub = ctx.wallet.accounts.standard_bip32_accounts[&0].account_xpub;
+            let bip32_address = ctx
+                .managed_wallet
+                .first_bip32_managed_account_mut()
+                .expect("BIP32 account")
+                .next_receive_address(Some(&bip32_xpub))
+                .expect("BIP32 address");
+
+            let tx = paying(1, &[&bip32_address, &addresses[2 * gap], &addresses[3 * gap]], 40_000);
+            let mempool = ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+            assert_eq!(mempool.affected_accounts.len(), 1, "only BIP32 sees it in the mempool");
+
+            ctx.check_transaction(&paying(2, &[&addresses[1]], 7_000), TransactionContext::Mempool)
+                .await;
+            ctx.check_transaction(
+                &paying(3, &[&addresses[gap]], 7_000),
+                TransactionContext::Mempool,
+            )
+            .await;
+            let far =
+                ctx.bip44_account().get_address_info(&addresses[2 * gap]).expect("far address");
+            assert!(!far.is_used());
+            assert!(!ctx.bip44_account().contains_address(&addresses[3 * gap]));
+
+            let context = block.unwrap_or_else(|| {
+                TransactionContext::InstantSend(InstantLock {
+                    txid: tx.txid(),
+                    ..InstantLock::default()
+                })
+            });
+            let result = ctx.check_transaction(&tx, context.clone()).await;
+            assert!(!result.is_new_transaction);
+            assert_eq!(result.new_records.len(), 1, "BIP44 backfills a record at {context}");
+            let record = &result.new_records[0];
+            assert_eq!(owned_output_count(record), 2, "the record holds both outputs at {context}");
+            let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
+            assert_eq!(credited, 2, "{context}");
+
+            let account = ctx.bip44_account();
+            for index in [2 * gap, 3 * gap] {
+                let info = account.get_address_info(&addresses[index]).expect("paid address");
+                assert!(info.is_used(), "the backfilled transaction pays index {index}");
+            }
+            assert!(account.contains_address(&addresses[3 * gap + 1]), "the window extends");
+            assert!(
+                result.new_addresses.iter().any(|d| d.info.address == addresses[3 * gap + 1]),
+                "the extension is reported with the backfilled record"
+            );
+        }
+    }
+
+    /// A late lock on a mined transaction that only a spend-only record holds is stale: an
+    /// account that matches it only now is not backfilled with an `InstantSend` context.
+    #[tokio::test]
+    async fn test_late_lock_on_a_mined_spend_backfills_nothing() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let bip32_xpub = ctx.wallet.accounts.standard_bip32_accounts[&0].account_xpub;
+        let bip32_address = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 account")
+            .next_receive_address(Some(&bip32_xpub))
+            .expect("BIP32 address");
+
+        let funding = paying(1, &[&bip32_address], 50_000);
+        ctx.check_transaction(&funding, chain_locked(1, 1)).await;
+        let mut spend = paying(2, &[&addresses[2 * gap]], 40_000);
+        spend.input[0].previous_output = OutPoint {
+            txid: funding.txid(),
+            vout: 0,
+        };
+        let mined = ctx.check_transaction(&spend, chain_locked(2, 2)).await;
+        assert_eq!(mined.affected_accounts.len(), 1, "only BIP32 sees the spend in its block");
+
+        ctx.check_transaction(&paying(3, &[&addresses[1]], 7_000), TransactionContext::Mempool)
+            .await;
+        ctx.check_transaction(&paying(4, &[&addresses[gap]], 7_000), TransactionContext::Mempool)
+            .await;
+        assert!(ctx.bip44_account().contains_address(&addresses[2 * gap]));
+
+        let lock = TransactionContext::InstantSend(InstantLock {
+            txid: spend.txid(),
+            ..InstantLock::default()
+        });
+        let result = ctx.check_transaction(&spend, lock).await;
+        assert!(result.new_records.is_empty(), "a mined transaction takes no lock-only record");
+        assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
     }
 
     /// The same late recognition on a transaction we funded: its first record
@@ -4301,32 +4464,78 @@ mod tests {
     async fn test_redelivered_finalized_transaction_owning_a_newly_derived_output_is_credited() {
         let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
-        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let addresses = bip44_receive_addresses(&ctx, 3 * gap as u32 + 2);
 
-        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap], &addresses[3 * gap]], 40_000);
         let first = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
         let later = paying(2, &[&addresses[gap]], 7_000);
         ctx.check_transaction(&later, in_chain_locked_block(101, 2)).await;
+        assert!(!ctx.bip44_account().contains_address(&addresses[3 * gap]));
 
         let again = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
-        assert_eq!(credited, 2);
-        assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
-        assert!(again.state_modified, "the credit is a state change in both configs");
+        assert_eq!(credited, 3);
+        assert_eq!(ctx.managed_wallet.balance.total(), 127_000);
         assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
         let updated = &again.updated_records[0];
-        assert_eq!(owned_output_count(updated), 2);
-        assert_eq!(updated.net_amount, 80_000);
+        assert_eq!(owned_output_count(updated), 3);
+        assert_eq!(updated.net_amount, 120_000);
         assert_eq!(updated.direction, TransactionDirection::Incoming);
         assert!(updated.context.is_chain_locked());
         #[cfg(feature = "keep-finalized-transactions")]
-        assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
+        assert_eq!(ctx.transaction(&early.txid()).net_amount, 120_000, "stored record");
 
         let settled = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         assert!(settled.updated_records.is_empty());
-        assert!(!settled.state_modified);
-        assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+        assert_eq!(ctx.managed_wallet.balance.total(), 127_000);
+    }
+
+    /// A foreign-funded asset lock whose credit outputs pay `value` to each of `addresses`.
+    fn asset_lock_paying(seed: u8, addresses: &[&Address], value: u64) -> Transaction {
+        let mut tx = paying(seed, addresses, value);
+        tx.version = 3;
+        let credit_outputs = mem::take(&mut tx.output);
+        tx.special_transaction_payload =
+            Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs,
+            }));
+        tx
+    }
+
+    /// The same cascade on a keys-only account: its window advances over every key the
+    /// finalized transaction pays on one re-delivery.
+    #[tokio::test]
+    async fn test_redelivered_finalized_transaction_advances_a_keys_account_over_every_key() {
+        fn identity(ctx: &TestWalletContext) -> &ManagedCoreKeysAccount {
+            ctx.managed_wallet.identity_registration_managed_account().expect("identity account")
+        }
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_SPECIAL_GAP_LIMIT;
+        let account = ctx.wallet.accounts.identity_registration.as_ref().expect("identity account");
+        let keys: Vec<Address> = (0..3 * gap + 2)
+            .map(|index| account.derive_address_at(AddressPoolType::Absent, index, None).unwrap())
+            .collect();
+        let gap = gap as usize;
+
+        let early = asset_lock_paying(1, &[&keys[1], &keys[2 * gap], &keys[3 * gap]], 40_000);
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        {
+            assert!(identity(&ctx).transaction_is_finalized(&early.txid()));
+            assert!(!identity(&ctx).transactions().contains_key(&early.txid()));
+        }
+        let later = asset_lock_paying(2, &[&keys[gap]], 7_000);
+        ctx.check_transaction(&later, in_chain_locked_block(101, 2)).await;
+        let second = identity(&ctx).get_address_info(&keys[2 * gap]).expect("watched");
+        assert!(!second.is_used());
+        assert!(!identity(&ctx).contains_address(&keys[3 * gap]));
+
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        let third = identity(&ctx).get_address_info(&keys[3 * gap]).expect("derived");
+        assert!(third.is_used(), "the re-delivered transaction pays index {}", 3 * gap);
+        assert!(identity(&ctx).contains_address(&keys[3 * gap + 1]));
     }
 
     /// A host that keeps only the emitted records, and on load restores the
@@ -4437,8 +4646,25 @@ mod tests {
                 assert_eq!(again.updated_records[0].net_amount, 80_000, "{format}");
             } else {
                 assert!(again.updated_records.is_empty(), "{format}");
-                assert!(again.state_modified, "{format}");
             }
+        }
+
+        // A legacy account confirms before marking its addresses used: one cascade step per
+        // re-delivery, and each coin is credited once.
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 3 * gap as u32 + 1);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap], &addresses[3 * gap]], 40_000);
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        let account = ctx.managed_wallet.first_bip44_managed_account_mut().unwrap();
+        *account = without_summaries(account);
+        let later = paying(2, &[&addresses[gap]], 7_000);
+        ctx.check_transaction(&later, in_chain_locked_block(101, 2)).await;
+        for (coins, total) in [(2, 87_000), (3, 127_000), (3, 127_000)] {
+            ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+            let credited =
+                ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
+            assert_eq!((credited, ctx.managed_wallet.balance.total()), (coins, total));
         }
     }
 

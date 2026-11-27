@@ -11,4 +11,7 @@ mod tests_mempool;
 mod tests_multi_wallet;
 mod tests_node_start;
 mod tests_restart;
+// SIGSTOP freezes dashd, and Windows has no equivalent.
+#[cfg(unix)]
+mod tests_stall;
 mod tests_transaction;
