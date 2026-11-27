@@ -1732,3 +1732,55 @@ async fn a_wallet_restored_in_the_same_session_is_passed_a_held_locked_spend_aga
         "the held C is passed to the restored wallet again"
     );
 }
+
+/// Our own broadcasts that a wallet then abandoned, or swept as beaten by a locked conflict,
+/// are no longer resent by the rebroadcast timer. A broadcast the wallets still hold is.
+#[tokio::test]
+async fn the_rebroadcast_timer_skips_abandoned_and_swept_broadcasts() {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let to_a = next_unused_receive_address(&h.wallets, &a).await;
+    let elsewhere = address_of_unregistered(MNEMONIC_B).await;
+    let local = SocketAddr::from(([0, 0, 0, 0], 0));
+
+    let beaten = Transaction::dummy(&to_a, 41..42, &[COIN]);
+    let abandoned = Transaction::dummy(&to_a, 42..43, &[COIN]);
+    let kept = Transaction::dummy(&to_a, 43..44, &[COIN]);
+    for tx in [&beaten, &abandoned, &kept] {
+        h.manager.handle_tx(tx.clone(), local, &h.network).await.unwrap();
+    }
+    assert_eq!(h.manager.broadcasts.len(), 3, "the precondition");
+
+    let mut winner = Transaction::dummy(&elsewhere, 0..1, &[COIN]);
+    winner.input = beaten.input.clone();
+    h.wallets.write().await.process_mempool_transaction(&winner, Some(lock_for(&winner))).await;
+    {
+        let mut wallets = h.wallets.write().await;
+        let info = wallets.get_wallet_info_mut(&a).unwrap();
+        info.abandon_transaction(abandoned.txid());
+        info.update_balance();
+    }
+    assert!(h.wallets.read().await.is_dismissed(&beaten.txid()), "the precondition");
+    h.network_mock.clear_sent().await;
+
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+    h.manager.rebroadcast_if_due_at(&h.network, later).await;
+
+    let mut resent: Vec<Txid> = h
+        .network_mock
+        .sent_to_messages()
+        .await
+        .into_iter()
+        .map(|(_, message)| message)
+        .chain(h.network_mock.broadcast_messages().await)
+        .filter_map(|message| match message {
+            NetworkMessage::Tx(tx) => Some(tx.txid()),
+            _ => None,
+        })
+        .collect();
+    resent.dedup();
+    assert_eq!(resent, vec![kept.txid()]);
+    assert_eq!(h.manager.broadcasts.len(), 3, "dismissed broadcasts stay tracked");
+}

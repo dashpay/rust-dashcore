@@ -1026,6 +1026,10 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// - `Accepted`/`Uncertain`: plain broadcast to all peers (the holdout no
     ///   longer matters; a late echo from a new peer can still upgrade
     ///   `Uncertain` to `Accepted`).
+    ///
+    /// A transaction a wallet dismissed (abandoned, swept as beaten, or held back
+    /// as a spend of one) is not resent while it stays dismissed. Its entry is
+    /// kept, so a late lock or confirmation still reports the outcome.
     pub(super) async fn rebroadcast_if_due(&mut self, network: &Arc<dyn NetworkManager>) {
         self.rebroadcast_if_due_at(network, Instant::now()).await
     }
@@ -1033,19 +1037,38 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// `now`-injected variant of [`Self::rebroadcast_if_due`]. Tests project `now`
     /// forward instead of subtracting from `Instant::now()`, which underflows on
     /// Windows when the QPC-based monotonic clock has a small value at boot.
-    async fn rebroadcast_if_due_at(&mut self, network: &Arc<dyn NetworkManager>, now: Instant) {
+    pub(super) async fn rebroadcast_if_due_at(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+        now: Instant,
+    ) {
         let current_peers: Vec<SocketAddr> = self.peers.keys().copied().collect();
+        if current_peers.is_empty() {
+            return;
+        }
+        let due: Vec<Txid> = self
+            .broadcasts
+            .iter()
+            .filter(|(_, state)| {
+                // A pending broadcast that never reached any peer (no peers were
+                // connected at send time) is due immediately.
+                let never_sent =
+                    state.status == BroadcastStatus::Pending && state.sent_to.is_empty();
+                never_sent
+                    || now.saturating_duration_since(state.last_broadcast) >= REBROADCAST_INTERVAL
+            })
+            .map(|(txid, _)| *txid)
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        let due: HashSet<Txid> = {
+            let wallet = self.wallet.read().await;
+            due.into_iter().filter(|txid| !wallet.is_dismissed(txid)).collect()
+        };
         let mut count: usize = 0;
         for (txid, state) in &mut self.broadcasts {
-            if current_peers.is_empty() {
-                continue;
-            }
-            // A pending broadcast that never reached any peer (no peers were
-            // connected at send time) is due immediately.
-            let never_sent = state.status == BroadcastStatus::Pending && state.sent_to.is_empty();
-            if !never_sent
-                && now.saturating_duration_since(state.last_broadcast) < REBROADCAST_INTERVAL
-            {
+            if !due.contains(txid) {
                 continue;
             }
             if state.status == BroadcastStatus::Pending {
