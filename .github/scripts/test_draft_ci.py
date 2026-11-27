@@ -21,7 +21,7 @@ class FakeGitHub:
     """A repository with one PR. A run goes through its gate the way `draft-gate.yml` decides."""
 
     def __init__(self, draft=True):
-        self.pr = {"number": 1, "draft": draft, "head": {"sha": SHA}}
+        self.pr = {"number": 1, "state": "open", "draft": draft, "head": {"sha": SHA}}
         self.comments = []
         self.runs = []
         self.reruns = []
@@ -255,7 +255,7 @@ class BoxTests(unittest.TestCase):
 
     def test_a_request_the_pr_moved_past_starts_nothing(self):
         for change, note in (({"head": {"sha": OTHER_SHA}}, "CI did not start for aaaaaaaa. The PR moved on to bbbbbbbb."),
-                             ({"draft": False}, "marked ready for review")):
+                             ({"draft": False}, "not a draft"), ({"state": "closed"}, "closed")):
             with self.subTest(note=note):
                 gh = FakeGitHub()
                 gh.open_draft()
@@ -314,11 +314,15 @@ class BoxTests(unittest.TestCase):
         self.assertIn("could not be started", self.gh.body)
         self.assertEqual(self.gh.body.count("draft-ci:note"), 1)
 
-    def test_a_ready_pr_starts_nothing(self):
-        self.gh.pr["draft"] = False
-        self.gh.tick("once")
-        self.assertEqual(self.gh.reruns, [])
-        self.assertIn("not a draft", self.gh.body)
+    def test_a_ready_or_closed_pr_starts_nothing(self):
+        for change, note in (({"draft": False}, "not a draft"), ({"state": "closed"}, "closed")):
+            with self.subTest(note=note):
+                gh = FakeGitHub()
+                gh.open_draft()
+                gh.pr.update(change)
+                gh.tick("once")
+                self.assertEqual(gh.reruns, [])
+                self.assertIn(note, gh.body)
 
     def test_a_box_ticked_while_runs_start_is_kept(self):
         tick = self.gh.finish_runs

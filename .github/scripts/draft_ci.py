@@ -118,11 +118,12 @@ def newest_runs(gh, sha: str) -> list:
     return sorted(newest.values(), key=lambda run: run["name"])
 
 
-def moved_on(gh, number: int, sha: str) -> str | None:
-    """Returns why a request for `sha` no longer applies, or `None` while the PR is still a draft at `sha`."""
-    pr = gh.request("GET", f"pulls/{number}")
+def moved_on(pr: dict, sha: str) -> str | None:
+    """Returns why a request for `sha` no longer applies to `pr`, or `None` while `pr` is an open draft at `sha`."""
+    if pr["state"] != "open":
+        return "This PR is closed, so CI does not start."
     if not pr["draft"]:
-        return "The PR was marked ready for review, so CI runs on every push."
+        return "This PR is not a draft, so CI runs on every push."
     if pr["head"]["sha"] != sha:
         return f"The PR moved on to {pr['head']['sha'][:8]}."
     return None
@@ -153,7 +154,7 @@ def start_runs(gh, number: int, sha: str, again: bool, deadline: float, sleep=ti
                 failed.append(f"The gate of {name} has not finished yet, tick a box again later")
                 continue
             # A restart joins the concurrency group of the PR's newer runs and would cancel them.
-            if stop := moved_on(gh, number, sha):
+            if stop := moved_on(gh.request("GET", f"pulls/{number}"), sha):
                 break
             gh.request("POST", f"actions/runs/{run['id']}/rerun")
             started.append(name)
@@ -198,8 +199,8 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
 
     if not (once or enabled or disabled):
         return
-    if not pr["draft"]:
-        note = "This PR is not a draft, so CI runs on every push."
+    if reason := moved_on(pr, pr["head"]["sha"]):
+        note = reason
     elif once or enabled:
         try:
             note = start_runs(gh, number, pr["head"]["sha"], once, deadline, sleep=sleep, clock=clock)
