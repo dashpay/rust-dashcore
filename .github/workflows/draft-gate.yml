@@ -26,9 +26,12 @@ jobs:
       # A restarted run keeps its first event payload, so the attempt is the only sign of a request.
       ASK: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.run_attempt == '1' }}
     steps:
+      # The runner is shared with jobs that hold a write token, so it runs the default branch's
+      # script, never a copy the PR changed.
       - uses: actions/checkout@v7.0.1
         if: env.ASK == 'true'
         with:
+          ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/scripts
           persist-credentials: false
       - name: Decide whether CI runs
