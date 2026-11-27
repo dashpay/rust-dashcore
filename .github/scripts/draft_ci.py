@@ -142,6 +142,9 @@ def start_runs(gh, number: int, sha: str, again: bool, deadline: float, sleep=ti
             failed.append(f"{name} waits for a maintainer to approve the run")
             continue
         try:
+            # The listing can be minutes old once an earlier run used up the wait.
+            if run["status"] != "completed":
+                run = gh.request("GET", f"actions/runs/{run['id']}")
             jobs = jobs_of(gh, run["id"])
             # GitHub refuses to restart a run before it completes.
             while run["status"] != "completed" and not ran_ci(jobs) and clock() < deadline:

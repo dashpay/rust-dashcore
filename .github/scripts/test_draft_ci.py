@@ -83,7 +83,7 @@ class FakeGitHub:
         if path.startswith("actions/runs?"):
             if self.fail_run_list:
                 raise GitHubError("HTTP 502")
-            return [run for run in self.runs if f"head_sha={run['head_sha']}&" in path]
+            return [dict(run) for run in self.runs if f"head_sha={run['head_sha']}&" in path]
         if path.startswith("pulls?"):
             return [self.pr]
         if path.startswith("issues/1/comments"):
@@ -106,7 +106,7 @@ class FakeGitHub:
         elif match := re.fullmatch(r"actions/runs/(\d+)(/rerun)?", path):
             run = self.runs[int(match.group(1)) - 1]
             if method == "GET":
-                return run
+                return dict(run)
             if self.fail_reruns or run["status"] != "completed":
                 raise GitHubError("HTTP 403")
             run.update(attempt=run["attempt"] + 1, ci=True, status="in_progress")
@@ -252,6 +252,21 @@ class BoxTests(unittest.TestCase):
         self.assertEqual(self.gh.body.count("has not finished yet"), 3)
         # Two minutes of the 15 minute job timeout stay for checkout and Python setup.
         self.assertLessEqual(self.gh.now, 13 * 60)
+
+    def test_a_run_that_finished_during_the_wait_for_another_is_restarted(self):
+        sleeps = []
+        self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            for run in self.gh.runs:
+                if run["name"] != "Continuous integration":
+                    run.update(status="completed", listed=True)
+
+        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
+        boxes(self.gh, 1, 1, BODY, sleep=sleep, clock=lambda: sum(sleeps))
+        self.assertEqual(self.gh.reruns, ["Pre-commit Checks", "Sanitizer"])
+        self.assertIn("The gate of Continuous integration has not finished yet", self.gh.body)
 
     def test_a_request_the_pr_moved_past_starts_nothing(self):
         for change, note in (({"head": {"sha": OTHER_SHA}}, "CI did not start for aaaaaaaa. The PR moved on to bbbbbbbb."),
