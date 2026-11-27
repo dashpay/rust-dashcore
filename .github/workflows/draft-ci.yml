@@ -24,7 +24,8 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.event.issue.number || format('{0}:{1}', github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch) }}
       cancel-in-progress: false
-    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    # A fresh hosted machine, since PR workflows can run their own commands on the light runner.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: write
