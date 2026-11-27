@@ -393,8 +393,7 @@ impl ManagedWalletInfo {
             .set_current_height(self.last_processed_height())
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
-            )))
-            .require_final_inputs();
+            )));
         if drain {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
@@ -704,7 +703,6 @@ mod tests {
             is_confirmed,
             is_instantlocked: false,
             is_locked: false,
-            is_trusted: false,
         };
         account.utxos.insert(outpoint, utxo);
         outpoint
@@ -746,7 +744,6 @@ mod tests {
             is_confirmed,
             is_instantlocked: false,
             is_locked: false,
-            is_trusted: false,
         };
         account.utxos.insert(outpoint, utxo);
         outpoint
@@ -1311,7 +1308,6 @@ mod tests {
                 is_confirmed: true,
                 is_instantlocked: false,
                 is_locked: false,
-                is_trusted: false,
             },
         );
         outpoint

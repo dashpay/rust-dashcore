@@ -80,7 +80,8 @@ pub struct TransactionBuilder {
     fee_rate: FeeRate,
     current_height: u32,
     selection_strategy: SelectionStrategy,
-    require_final_inputs: bool,
+    /// Lets non-final coins fund the build, only to tell whether they would.
+    allow_waiting_inputs: bool,
     preserve_output_order: bool,
     change_to_first_input: bool,
     /// Special transaction payload for Dash-specific transactions
@@ -116,7 +117,7 @@ impl TransactionBuilder {
             fee_rate: FeeRate::normal(),
             current_height: 0,
             selection_strategy: SelectionStrategy::BranchAndBound,
-            require_final_inputs: false,
+            allow_waiting_inputs: false,
             preserve_output_order: false,
             change_to_first_input: false,
             special_payload: None,
@@ -124,17 +125,6 @@ impl TransactionBuilder {
             funding: Vec::new(),
             locked: HashSet::new(),
         }
-    }
-
-    /// Restrict coin selection to final inputs: confirmed or
-    /// InstantSend-locked UTXOs. Per DIP-0010 only such inputs are
-    /// InstantSend-eligible, so transactions that must receive an
-    /// InstantSend lock themselves (e.g. asset locks funding Platform
-    /// credits) must never spend other mempool outputs, including our
-    /// own trusted change.
-    pub fn require_final_inputs(mut self) -> Self {
-        self.require_final_inputs = true;
-        self
     }
 
     pub fn set_current_height(mut self, current_height: u32) -> Self {
@@ -469,7 +459,7 @@ impl TransactionBuilder {
     fn assemble_unsigned(
         self,
     ) -> Result<(Transaction, Vec<Utxo>, Option<ReservationToken>), BuilderError> {
-        let trial = self.require_final_inputs.then(|| self.with_waiting_coins());
+        let trial = self.with_waiting_coins();
         let funding = self.funding.clone();
         let current_height = self.current_height;
 
@@ -485,7 +475,7 @@ impl TransactionBuilder {
                     ..
                 }),
             ) => {
-                if let Some(Ok((_, inputs))) = trial.map(Self::prepare) {
+                if let Ok((_, inputs)) = trial.prepare() {
                     let waiting = inputs
                         .iter()
                         .filter(|utxo| !(utxo.is_confirmed || utxo.is_instantlocked))
@@ -534,7 +524,7 @@ impl TransactionBuilder {
             fee_rate: self.fee_rate,
             current_height: self.current_height,
             selection_strategy: self.selection_strategy,
-            require_final_inputs: false,
+            allow_waiting_inputs: true,
             preserve_output_order: self.preserve_output_order,
             change_to_first_input: self.change_to_first_input,
             special_payload: self.special_payload.clone(),
@@ -571,7 +561,9 @@ impl TransactionBuilder {
             _ => self.outputs.iter().map(|o| o.value).sum(),
         };
 
-        if self.require_final_inputs {
+        // Only final coins fund a build: a coin the network has not settled
+        // may never exist, and with it anything built on it.
+        if !self.allow_waiting_inputs {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
@@ -1197,7 +1189,7 @@ mod tests {
             _ => builder.outputs.iter().map(|o| o.value).sum(),
         };
 
-        if builder.require_final_inputs {
+        if !builder.allow_waiting_inputs {
             builder.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
@@ -1434,7 +1426,6 @@ mod tests {
             .set_change_address(Address::dummy(Network::Testnet, 0))
             .add_inputs(utxos)
             .add_output(&Address::dummy(Network::Testnet, 1), amount)
-            .require_final_inputs()
             .build_unsigned_reserved();
 
         if covered {

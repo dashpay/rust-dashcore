@@ -23,7 +23,7 @@ use crate::Network;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, ScriptBuf, Transaction, Txid};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Immutable reference to a managed core account, either funds-bearing or
 /// keys-only.
@@ -302,7 +302,6 @@ impl<'a> ManagedAccountRefMut<'a> {
             transaction_type,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &BTreeSet::new(),
         )
     }
 
@@ -313,10 +312,6 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
     /// view; an output it names is not credited.
-    ///
-    /// `external_final_parents` is the wallet-level view of input parents held
-    /// by sibling accounts, used for the trusted-self-send determination.
-    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn record_transaction_with_observed_spends(
         &mut self,
         tx: &Transaction,
@@ -325,7 +320,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
-        external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         match self {
             ManagedAccountRefMut::Funds(a) => a.record_transaction(
@@ -335,7 +329,6 @@ impl<'a> ManagedAccountRefMut<'a> {
                 transaction_type,
                 observed_spent,
                 spent_claims,
-                external_final_parents,
             ),
             ManagedAccountRefMut::Keys(a) => {
                 a.record_transaction(tx, account_match, context, transaction_type)
@@ -371,7 +364,6 @@ impl<'a> ManagedAccountRefMut<'a> {
             transaction_type,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &BTreeSet::new(),
         )
     }
 
@@ -381,10 +373,6 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
     /// view; an output it names is not credited.
-    ///
-    /// `external_final_parents` is the wallet-level view of input parents held
-    /// by sibling accounts, used for the trusted-self-send determination.
-    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction_with_observed_spends(
         &mut self,
         tx: &Transaction,
@@ -393,7 +381,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
-        external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         match self {
             ManagedAccountRefMut::Funds(a) => a.confirm_transaction(
@@ -403,7 +390,6 @@ impl<'a> ManagedAccountRefMut<'a> {
                 transaction_type,
                 observed_spent,
                 spent_claims,
-                external_final_parents,
             ),
             ManagedAccountRefMut::Keys(a) => {
                 a.confirm_transaction(tx, account_match, context, transaction_type)

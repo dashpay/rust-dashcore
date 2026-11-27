@@ -900,7 +900,6 @@ async fn a_locked_coin_is_not_reported_as_awaiting_finality() {
         .add_funding(funds, &account)
         .add_inputs([stale])
         .add_output(&elsewhere().assume_checked(), DASH)
-        .require_final_inputs()
         .build_unsigned_reserved();
 
     assert!(matches!(result, Err(BuilderError::CoinSelection(_))), "got {result:?}");
