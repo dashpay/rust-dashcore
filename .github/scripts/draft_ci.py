@@ -23,8 +23,8 @@ AUTO = "auto"
 # The workflows whose jobs wait for `Draft Gate`.
 GATED = {".github/workflows/rust.yml", ".github/workflows/pre-commit.yml", ".github/workflows/sanitizer.yml"}
 POLL_SECONDS = 10
-# Shared by all runs of one request and counted in real time. With every call at `CALL_SECONDS`, a
-# request still reports what happened within the job's 15 minute timeout.
+# Shared by all runs of one request and counted in real time. With every call at `CALL_SECONDS`, the
+# calls after the wait still fit in the job's 20 minute timeout, so the request reports what happened.
 WAIT_SECONDS = 600
 CALL_SECONDS = 30
 NOTE = re.compile(r"\n*<!-- draft-ci:note -->.*", re.DOTALL)

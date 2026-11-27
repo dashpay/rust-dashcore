@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, GitHub, GitHubError, boxes, gate, is_ticked,
+from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, WAIT_SECONDS, GitHub, GitHubError, boxes, gate, is_ticked,
                       notice, set_output)
 
 SHA = "a" * 40
@@ -250,8 +250,8 @@ class BoxTests(unittest.TestCase):
         boxes(self.gh, 1, 1, BODY, sleep=sleep, clock=lambda: self.gh.now)
         self.assertEqual(self.gh.reruns, [])
         self.assertEqual(self.gh.body.count("has not finished yet"), 3)
-        # Two minutes of the 15 minute job timeout stay for checkout and Python setup.
-        self.assertLessEqual(self.gh.now, 13 * 60)
+        # The wait counts from the start, so only the calls after it run past the ten minutes.
+        self.assertLessEqual(self.gh.now, WAIT_SECONDS + 4 * 60)
 
     def test_a_run_that_finished_during_the_wait_for_another_is_restarted(self):
         sleeps = []
