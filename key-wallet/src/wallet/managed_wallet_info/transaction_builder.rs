@@ -6,7 +6,7 @@
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::wallet::managed_wallet_info::coin_selection::{
-    CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
+    CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_INPUT_SIZE, TX_OUTPUT_SIZE,
 };
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::{Account, DerivationPath, Signer, Utxo, Wallet};
@@ -25,6 +25,11 @@ use std::collections::HashSet;
 /// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
+/// Most inputs Dash Core relays in an asset lock (`MAX_STANDARD_ASSET_LOCK_INPUTS`).
+/// Platform applies the same cap in consensus.
+pub const MAX_STANDARD_ASSET_LOCK_INPUTS: usize = 100;
+/// Largest asset lock in bytes that Dash Core relays.
+pub const MAX_STANDARD_ASSET_LOCK_SIZE: usize = 20_480;
 /// Relay-policy limit for OP_RETURN payloads, matching Dash Core's `-datacarriersize` default.
 /// Public so callers can reject an over-long payload before handing over a builder
 /// `add_op_return` would consume.
@@ -575,6 +580,14 @@ impl TransactionBuilder {
             self.inputs.retain(|utxo| utxo.is_confirmed || utxo.is_instantlocked);
         }
 
+        let is_asset_lock =
+            matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)));
+        let max_inputs = if is_asset_lock {
+            MAX_STANDARD_ASSET_LOCK_INPUTS
+        } else {
+            MAX_STANDARD_TX_INPUTS
+        };
+
         if !self.funding.is_empty() {
             // Every UTXO a funding account offers is unreserved, but a seeded
             // one need not be: `add_inputs` consults neither the reservation
@@ -610,11 +623,22 @@ impl TransactionBuilder {
 
         let mut selected_inputs = selection.selected;
 
-        if selected_inputs.len() > MAX_STANDARD_TX_INPUTS {
+        if selected_inputs.len() > max_inputs {
             return Err(BuilderError::TooManyInputs {
                 count: selected_inputs.len(),
-                max: MAX_STANDARD_TX_INPUTS,
+                max: max_inputs,
             });
+        }
+
+        if is_asset_lock {
+            // `TX_INPUT_SIZE` bounds a signed P2PKH input, so this bounds the signed size.
+            let size = self.calculate_base_size() + selected_inputs.len() * TX_INPUT_SIZE;
+            if size > MAX_STANDARD_ASSET_LOCK_SIZE {
+                return Err(BuilderError::TransactionTooLarge {
+                    size,
+                    max: MAX_STANDARD_ASSET_LOCK_SIZE,
+                });
+            }
         }
 
         let total_input: u64 = selected_inputs.iter().map(|u| u.value()).sum();
@@ -660,8 +684,6 @@ impl TransactionBuilder {
             //
             // An asset lock is the exception: ITS single output IS an OP_RETURN (the burn
             // mirroring the payload credits), so it stays the value carrier.
-            let is_asset_lock =
-                matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)));
             if !is_asset_lock
                 && tx_outputs.iter().any(|out| out.script_pubkey.is_op_return() && out.value != 0)
             {
@@ -1112,6 +1134,11 @@ pub enum BuilderError {
         count: usize,
         max: usize,
     },
+    /// The transaction would be larger than Dash Core relays.
+    TransactionTooLarge {
+        size: usize,
+        max: usize,
+    },
     /// OP_RETURN payload exceeds the standard relay-policy size.
     OpReturnDataTooLarge {
         len: usize,
@@ -1146,6 +1173,12 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "Too many inputs for a standard transaction: {count} (max {max})")
+            }
+            Self::TransactionTooLarge {
+                size,
+                max,
+            } => {
+                write!(f, "Transaction too large to relay: {size} bytes (max {max})")
             }
             Self::OpReturnDataTooLarge {
                 len,
