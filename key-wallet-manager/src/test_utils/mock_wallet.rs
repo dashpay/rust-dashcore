@@ -431,7 +431,7 @@ pub struct MultiMockWallet {
     /// watches.
     scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
     /// Per-wallet birth height reported through `earliest_required_height`. Absent means 0.
-    birth_heights: std::collections::BTreeMap<WalletId, CoreBlockHeight>,
+    birth_heights: BTreeMap<WalletId, CoreBlockHeight>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -449,7 +449,7 @@ impl MultiMockWallet {
         Self {
             wallets: std::collections::BTreeMap::new(),
             scan_addresses: std::collections::BTreeMap::new(),
-            birth_heights: std::collections::BTreeMap::new(),
+            birth_heights: BTreeMap::new(),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }

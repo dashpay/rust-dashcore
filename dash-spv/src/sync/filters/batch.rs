@@ -34,6 +34,9 @@ pub(super) struct FiltersBatch {
     /// current account set (dashpay/rust-dashcore#649). Already-synced wallets
     /// must not be touched.
     scanned_wallets: BTreeMap<WalletId, u64>,
+    /// Each scanned wallet's `synced_height` at scan time. The scan skipped the heights at
+    /// or below it for that wallet, so a rewind below it before the commit is not covered.
+    synced_at_scan: BTreeMap<WalletId, u32>,
     /// Every script and filter element already matched against this batch's
     /// filters, per wallet, as the bytes the filters were queried with.
     tested: HashMap<WalletId, HashSet<Vec<u8>>>,
@@ -56,6 +59,7 @@ impl FiltersBatch {
             scanned: false,
             pending_blocks: 0,
             scanned_wallets: BTreeMap::new(),
+            synced_at_scan: BTreeMap::new(),
             tested: HashMap::new(),
             deferred_scripts: HashMap::new(),
         }
@@ -164,6 +168,17 @@ impl FiltersBatch {
     /// and must have their synced_height advanced when this batch commits.
     pub(super) fn scanned_wallets(&self) -> &BTreeMap<WalletId, u64> {
         &self.scanned_wallets
+    }
+
+    /// Record each scanned wallet's `synced_height` at scan time.
+    pub(super) fn set_synced_at_scan(&mut self, synced: BTreeMap<WalletId, u32>) {
+        self.synced_at_scan = synced;
+    }
+
+    /// Returns the first height this batch checked for `wallet_id`.
+    pub(super) fn first_tested_height(&self, wallet_id: &WalletId) -> u32 {
+        let synced = self.synced_at_scan.get(wallet_id).copied().unwrap_or(0);
+        synced.saturating_add(1).max(self.start_height)
     }
 }
 
