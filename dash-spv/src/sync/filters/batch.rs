@@ -30,8 +30,9 @@ pub(super) struct FiltersBatch {
     /// commits — each mapped to the wallet's `account_generation` at scan
     /// time. Commit refuses to advance a wallet whose generation has changed
     /// since the scan: an account added mid-flight means the scan did not test
-    /// the new account's scripts, so the batch cannot certify coverage for the
-    /// current account set (dashpay/rust-dashcore#649). Already-synced wallets
+    /// the new account's scripts, and a rewind mid-flight reopened heights the
+    /// scan skipped, so the batch cannot certify coverage for the wallet
+    /// (dashpay/rust-dashcore#649). Already-synced wallets
     /// must not be touched.
     scanned_wallets: BTreeMap<WalletId, u64>,
     /// Every script and filter element already matched against this batch's
