@@ -453,9 +453,13 @@ impl ManagedWalletInfo {
     /// `drain` locks the sourced accounts' whole spendable balance: every final
     /// UTXO is consumed and the single credit output's value is rewritten to
     /// `Σ inputs − fee` (the caller's credit-output value is ignored; exactly
-    /// one credit output is required). CoinJoin funding is drain-only and must
-    /// be the sole source: pooling mixed outputs with transparent ones in one
-    /// transaction links them and undoes the mixing.
+    /// one credit output is required). A drain over more than
+    /// [`MAX_STANDARD_ASSET_LOCK_INPUTS`] final UTXOs fails with
+    /// [`BuilderError::TooManyInputs`]: consolidate the account first. CoinJoin
+    /// funding is drain-only and must be the sole source: pooling mixed outputs
+    /// with transparent ones in one transaction links them and undoes the mixing.
+    ///
+    /// [`MAX_STANDARD_ASSET_LOCK_INPUTS`]: crate::wallet::managed_wallet_info::transaction_builder::MAX_STANDARD_ASSET_LOCK_INPUTS
     pub async fn build_asset_lock(
         &mut self,
         wallet: &Wallet,
@@ -645,6 +649,9 @@ mod tests {
     use super::*;
     use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::managed_wallet_info::transaction_builder::{
+        MAX_STANDARD_ASSET_LOCK_INPUTS, MAX_STANDARD_ASSET_LOCK_SIZE,
+    };
     use crate::{Network, Utxo};
     use dashcore::ecdsa::EcdsaSignature;
     use dashcore::{OutPoint, ScriptBuf, Txid};
@@ -795,6 +802,44 @@ mod tests {
         for (i, txin) in result.transaction.input.iter().enumerate() {
             assert!(!txin.script_sig.is_empty(), "input {i} not signed");
         }
+    }
+
+    /// An asset lock Dash Core would not relay fails before anything is reserved.
+    #[test_case(MAX_STANDARD_ASSET_LOCK_INPUTS as u8 + 1, 10_000, &[0], true
+        => matches AssetLockError::Builder(BuilderError::TooManyInputs { max: MAX_STANDARD_ASSET_LOCK_INPUTS, .. })
+        ; "drain over the input cap")]
+    #[test_case(150, 10_000, &[1_000_000], false
+        => matches AssetLockError::Builder(BuilderError::TooManyInputs { max: MAX_STANDARD_ASSET_LOCK_INPUTS, .. })
+        ; "exact amount over the input cap")]
+    #[test_case(1, 10_000_000, &[1_000; 700], false
+        => matches AssetLockError::Builder(BuilderError::TransactionTooLarge { max: MAX_STANDARD_ASSET_LOCK_SIZE, .. })
+        ; "too large")]
+    #[tokio::test]
+    async fn unrelayable_asset_lock_is_refused(
+        coins: u8,
+        value: u64,
+        credits: &[u64],
+        drain: bool,
+    ) -> AssetLockError {
+        let (wallet, mut info) = test_wallet_and_info();
+        for txid_byte in 0..coins {
+            insert_funded_utxo(&mut info, &wallet, txid_byte, value, true);
+        }
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(credits),
+                1000,
+                drain,
+            )
+            .await;
+
+        assert!(reserved_outpoints(&info).is_empty());
+        result.err().expect("an unrelayable asset lock must be refused")
     }
 
     /// A drain build requires exactly one credit output — anything else is
