@@ -690,8 +690,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
-        // Read once, before the wallet write lock below, so neither lock is taken under it.
-        let scan_floor = self.scan_floor().await;
+        // Read before the wallet write lock below, so header storage is never locked under it.
+        let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
 
         while let Some((&batch_start, batch)) = self.active_batches.first_key_value() {
             // Check if batch was scanned - can't commit until scanned
@@ -725,6 +725,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 let scanned_wallets = batch.scanned_wallets().clone();
                 if !scanned_wallets.is_empty() {
                     let mut wallet = self.wallet.write().await;
+                    // Under the same guard that reads and advances the checkpoints, so a wallet
+                    // set changed since the scan is judged by its current birth heights.
+                    let scan_floor =
+                        scan_floor_of(wallet.earliest_required_height().await, header_start);
                     for (wallet_id, generation_at_scan) in &scanned_wallets {
                         // Generation guard: an account added after this batch
                         // was scanned means the scan never tested the new
@@ -1105,8 +1109,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let wallet = self.wallet.read().await;
         let behind = wallet.wallets_behind(batch_end);
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
+        let mut synced_at_scan: BTreeMap<WalletId, u32> = BTreeMap::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
+            synced_at_scan.insert(*wallet_id, synced);
             // The scan query, which equals the monitored set today.
             let scripts = wallet.scan_script_pubkeys_for(wallet_id);
             // Bare owner/voting key hashes a compact filter carries beyond the
@@ -1133,10 +1139,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let scanned_wallets: BTreeMap<WalletId, u64> = behind
             .iter()
             .map(|wallet_id| (*wallet_id, wallet.wallet_account_generation(wallet_id)))
-            .collect();
-        let synced_at_scan: BTreeMap<WalletId, u32> = behind
-            .iter()
-            .map(|wallet_id| (*wallet_id, wallet.wallet_synced_height(wallet_id)))
             .collect();
         drop(wallet);
 
@@ -4376,15 +4378,7 @@ mod tests {
         let mut manager = create_multi_test_manager(multi.clone()).await;
 
         let block_40 = Block::dummy(40, vec![Transaction::dummy(&watched, 0..0, &[40])]);
-        let mut headers = Header::dummy_batch(0..101);
-        headers[40] = block_40.header;
-        manager
-            .header_storage
-            .write()
-            .await
-            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
-            .await
-            .unwrap();
+        anchor_headers_at(&manager.header_storage, 0, 101).await;
         {
             let mut filter_store = manager.filter_storage.write().await;
             let empty = BlockFilter::new(&[0; 32]);
