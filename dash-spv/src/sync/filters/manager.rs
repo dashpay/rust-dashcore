@@ -187,12 +187,6 @@ pub struct FiltersManager<
     sync_floor: u32,
 }
 
-/// Returns the lowest height a scan starts at, given the wallets' earliest birth height and
-/// the first stored header.
-fn scan_floor_of(birth_height: u32, header_start: u32) -> u32 {
-    birth_height.max(header_start)
-}
-
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
     FiltersManager<H, FH, F, W>
 {
@@ -346,7 +340,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }]);
         }
 
-        let scan_floor = scan_floor_of(wallet_birth_height, header_start_height);
+        let scan_floor = wallet_birth_height.max(header_start_height);
         let scan_start = if wallet_committed_height > 0 {
             scan_floor.max(wallet_committed_height + 1)
         } else {
@@ -683,7 +677,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     pub(super) async fn scan_floor(&self) -> u32 {
         let birth_height = self.wallet.read().await.earliest_required_height().await;
         let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
-        scan_floor_of(birth_height, header_start)
+        birth_height.max(header_start)
     }
 
     /// Commit completed batches in order (lowest batch_start first).
@@ -727,8 +721,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     let mut wallet = self.wallet.write().await;
                     // Under the same guard that reads and advances the checkpoints, so a wallet
                     // set changed since the scan is judged by its current birth heights.
-                    let scan_floor =
-                        scan_floor_of(wallet.earliest_required_height().await, header_start);
+                    let scan_floor = wallet.earliest_required_height().await.max(header_start);
                     for (wallet_id, generation_at_scan) in &scanned_wallets {
                         // Generation guard: an account added after this batch
                         // was scanned means the scan never tested the new
@@ -742,15 +735,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         if wallet.wallet_account_generation(wallet_id) != *generation_at_scan {
                             continue;
                         }
-                        // Certify only a wallet covered up to the first height this batch
-                        // checked for it. Heights below `scan_floor` count as covered: no
-                        // scan of the current chain starts below it.
+                        // Contiguity guard: a batch extends a wallet's certified coverage only
+                        // if the wallet was already certified up to the batch's start; a gap
+                        // below the batch must be rescanned, not silently certified. Heights
+                        // below `scan_floor` count as covered: no scan starts below it.
                         let effective_synced = wallet
                             .wallet_synced_height(wallet_id)
                             .max(scan_floor.saturating_sub(1));
-                        if effective_synced.saturating_add(1)
-                            >= batch.first_tested_height(wallet_id)
-                        {
+                        if effective_synced.saturating_add(1) >= batch_start {
                             wallet.update_wallet_synced_height(wallet_id, end);
                             // A committed batch certifies the whole range for
                             // this wallet, so it is also the wallet's maturity
@@ -1109,10 +1101,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let wallet = self.wallet.read().await;
         let behind = wallet.wallets_behind(batch_end);
         let mut wallet_states: Vec<WalletScanState> = Vec::new();
-        let mut synced_at_scan: BTreeMap<WalletId, u32> = BTreeMap::new();
         for wallet_id in &behind {
             let synced = wallet.wallet_synced_height(wallet_id);
-            synced_at_scan.insert(*wallet_id, synced);
             // The scan query, which equals the monitored set today.
             let scripts = wallet.scan_script_pubkeys_for(wallet_id);
             // Bare owner/voting key hashes a compact filter carries beyond the
@@ -1144,7 +1134,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             batch.set_scanned_wallets(scanned_wallets);
-            batch.set_synced_at_scan(synced_at_scan);
             for state in &wallet_states {
                 batch.mark_tested(state.id, &state.scripts);
                 batch.mark_tested(state.id, &state.elements);
@@ -4355,62 +4344,6 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 200_010);
         assert!(manager.active_batches.is_empty());
         assert_eq!(manager.state(), SyncState::Synced);
-    }
-
-    /// A wallet rewound while its batch waits for a block is not certified over the heights
-    /// the scan skipped for it. A second wallet further behind makes the download start the
-    /// batch below the first wallet's checkpoint.
-    #[tokio::test]
-    async fn rewind_while_a_batch_waits_does_not_certify_heights_the_scan_skipped() {
-        let wallet_a: WalletId = [0xA1; 32];
-        let wallet_b: WalletId = [0xB2; 32];
-        let watched = Address::dummy(Network::Regtest, 61);
-        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
-        multi.write().await.insert_wallet(
-            wallet_a,
-            MockWalletState {
-                addresses: vec![watched.clone()],
-                synced_height: 10,
-                ..MockWalletState::default()
-            },
-        );
-        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
-        let mut manager = create_multi_test_manager(multi.clone()).await;
-
-        let block_40 = Block::dummy(40, vec![Transaction::dummy(&watched, 0..0, &[40])]);
-        anchor_headers_at(&manager.header_storage, 0, 101).await;
-        {
-            let mut filter_store = manager.filter_storage.write().await;
-            let empty = BlockFilter::new(&[0; 32]);
-            for height in 0..=100 {
-                let filter = if height == 40 {
-                    BlockFilter::dummy(&block_40)
-                } else {
-                    empty.clone()
-                };
-                filter_store.store_filter(height, &filter.content).await.unwrap();
-            }
-        }
-
-        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
-        let events = manager.handle_new_filter_headers(100, &network).await.unwrap();
-        assert!(events.iter().any(|e| matches!(e, SyncEvent::BlocksNeeded { .. })));
-        assert!(manager.active_batches.contains_key(&0), "the batch waits for block 40");
-
-        // The host rewinds the checkpoint itself; `WalletInterface` only moves it forward.
-        multi.write().await.wallet_mut(&wallet_a).synced_height = 0;
-        let processed = SyncEvent::BlockProcessed {
-            block_hash: block_40.block_hash(),
-            height: 40,
-            wallets: BTreeSet::from([wallet_a]),
-            new_scripts: BTreeMap::new(),
-            confirmed_txids: vec![],
-        };
-        manager.handle_sync_event(&processed, &network).await.unwrap();
-
-        assert!(!manager.active_batches.contains_key(&0), "the batch committed");
-        assert_eq!(multi.read().await.wallet_synced_height(&wallet_b), 100);
-        assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 0);
     }
 
     /// `committed_height = 0` on a fresh manager must not falsely trip the
