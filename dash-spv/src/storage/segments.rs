@@ -31,6 +31,8 @@ pub(super) trait Persistable:
     const ITEMS_PER_SEGMENT: u32;
     /// The encoded size of every item, when it is fixed.
     const ENCODED_SIZE: Option<u64> = None;
+    /// Whether every height between the start and the tip must hold an item.
+    const CONTIGUOUS: bool = false;
 
     fn segment_file_name(segment_id: u32) -> String {
         format!("{}_{:06}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
@@ -52,6 +54,7 @@ impl Persistable for Vec<u8> {
 impl Persistable for HashedBlockHeader {
     const ITEMS_PER_SEGMENT: u32 = 10_000;
     const ENCODED_SIZE: Option<u64> = Some(112);
+    const CONTIGUOUS: bool = true;
 
     fn sentinel() -> &'static Self {
         // A lazy static, since building it X11-hashes the header.
@@ -74,6 +77,7 @@ impl Persistable for HashedBlockHeader {
 impl Persistable for FilterHeader {
     const ITEMS_PER_SEGMENT: u32 = 50_000;
     const ENCODED_SIZE: Option<u64> = Some(32);
+    const CONTIGUOUS: bool = true;
 
     fn sentinel() -> &'static Self {
         static SENTINEL: FilterHeader = FilterHeader::from_byte_array([0; 32]);
@@ -148,6 +152,10 @@ impl<I: Persistable> SegmentCache<I> {
                     .first_valid_offset()
                     .map(|offset| Self::segment_id_to_start_height(segment_id) + offset);
             }
+        }
+
+        if I::CONTIGUOUS {
+            cache.truncate_at_first_gap().await?;
         }
 
         Ok(cache)
@@ -441,6 +449,40 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(())
     }
 
+    /// Drops every item above the first empty slot between the start and the tip.
+    ///
+    /// Segments are persisted one by one, so a crash can leave a hole below a tip
+    /// that the next open reads as complete.
+    async fn truncate_at_first_gap(&mut self) -> StorageResult<()> {
+        let (Some(start), Some(tip)) = (self.start_height, self.tip_height) else {
+            return Ok(());
+        };
+
+        for segment_id in Self::height_to_segment_id(start)..=Self::height_to_segment_id(tip) {
+            let first_height = Self::segment_id_to_start_height(segment_id);
+            let from = start.saturating_sub(first_height) as usize;
+            let to = (tip - first_height + 1).min(Segment::<I>::ITEMS_PER_SEGMENT) as usize;
+
+            let segment = self.get_segment(&segment_id).await?;
+            let Some(offset) =
+                segment.items[from..to].iter().position(|item| item == I::sentinel())
+            else {
+                continue;
+            };
+
+            // The slot at `start` is never empty, so `gap` is above it.
+            let gap = first_height + (from + offset) as u32;
+            tracing::warn!(
+                "SegmentCache<{}>: no item at height {gap} below the tip {tip}, truncating to {}",
+                std::any::type_name::<I>(),
+                gap - 1
+            );
+            return self.truncate_above(gap - 1).await;
+        }
+
+        Ok(())
+    }
+
     /// Drop every stored item, leaving the cache empty.
     ///
     /// All backing segment files — including segments not currently resident
@@ -691,6 +733,8 @@ impl<I: Persistable> Segment<I> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -1228,6 +1272,31 @@ mod tests {
         let reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         assert_eq!(reloaded.tip_height(), None);
         assert_eq!(reloaded.start_height(), None);
+    }
+
+    #[tokio::test]
+    async fn test_load_truncates_at_stale_segment_hole() {
+        let tmp_dir = TempDir::new().unwrap();
+        let per_segment = FilterHeader::ITEMS_PER_SEGMENT;
+        let items = FilterHeader::dummy_batch(0..per_segment + 10);
+        let first_segment = tmp_dir.path().join(FilterHeader::segment_file_name(0));
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items[..100], 0).await.unwrap();
+        cache.persist(tmp_dir.path()).await;
+        let stale_first_segment = fs::read(&first_segment).unwrap();
+
+        cache.store_items_at_height(&items[100..], 100).await.unwrap();
+        cache.persist(tmp_dir.path()).await;
+        drop(cache);
+
+        // A kill after segment 1 reached disk but before segment 0 was rewritten.
+        fs::write(&first_segment, stale_first_segment).unwrap();
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        assert_eq!(cache.tip_height(), Some(99));
+        assert_eq!(cache.get_items(0..100).await.unwrap(), items[..100]);
+        assert!(!tmp_dir.path().join(FilterHeader::segment_file_name(1)).exists());
     }
 
     #[test]
