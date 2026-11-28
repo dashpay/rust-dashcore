@@ -708,6 +708,32 @@ async fn test_wallet_added_below_synced_wallet(restart: bool, mine: bool) {
     handle.stop().await;
 }
 
+/// A wallet born at the checkpoint the client anchored on, rewound below its birth
+/// height as a full rescan does, is scanned again up to the tip.
+#[tokio::test]
+async fn test_rescan_below_birth_of_a_wallet_born_at_the_anchor() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let height = ctx.dashd.initial_height;
+    let anchor = height / 2;
+    anchor_at_checkpoint(&ctx.client_config, &ctx.dashd.node, anchor).await;
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let wallet_id = wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(EMPTY_MNEMONIC, anchor, default_test_account_options())
+        .unwrap();
+    let mut handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, height).await;
+
+    wallet.write().await.get_wallet_info_mut(&wallet_id).unwrap().update_synced_height(0);
+    wait_for_wallet_synced(&wallet, &wallet_id, height).await;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+    handle.stop().await;
+}
+
 /// An explicit `start_from_height` limits how far down the client syncs, even
 /// for a wallet born below it.
 #[tokio::test]

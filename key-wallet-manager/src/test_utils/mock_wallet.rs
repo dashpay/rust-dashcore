@@ -430,6 +430,8 @@ pub struct MultiMockWallet {
     /// hand the filter scan a query that does not cover everything the wallet
     /// watches.
     scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
+    /// Per-wallet birth height reported through `earliest_required_height`. Absent means 0.
+    birth_heights: BTreeMap<WalletId, CoreBlockHeight>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -447,6 +449,7 @@ impl MultiMockWallet {
         Self {
             wallets: std::collections::BTreeMap::new(),
             scan_addresses: std::collections::BTreeMap::new(),
+            birth_heights: BTreeMap::new(),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }
@@ -455,6 +458,11 @@ impl MultiMockWallet {
     /// Insert or replace a wallet's state.
     pub fn insert_wallet(&mut self, wallet_id: WalletId, state: MockWalletState) {
         self.wallets.insert(wallet_id, state);
+    }
+
+    /// Set the birth height one wallet reports.
+    pub fn set_birth_height(&mut self, wallet_id: WalletId, height: CoreBlockHeight) {
+        self.birth_heights.insert(wallet_id, height);
     }
 
     /// Override the scan query for one wallet: `scan_script_pubkeys_for`
@@ -523,6 +531,14 @@ impl WalletInterface for MultiMockWallet {
 
     fn watched_outpoints(&self) -> Vec<OutPoint> {
         Vec::new()
+    }
+
+    async fn earliest_required_height(&self) -> CoreBlockHeight {
+        self.wallets
+            .keys()
+            .map(|id| self.birth_heights.get(id).copied().unwrap_or(0))
+            .min()
+            .unwrap_or(0)
     }
 
     fn last_processed_height(&self) -> CoreBlockHeight {
