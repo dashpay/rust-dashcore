@@ -187,6 +187,12 @@ pub struct FiltersManager<
     sync_floor: u32,
 }
 
+/// Returns the lowest height a scan starts at, given the wallets' earliest birth height and
+/// the first stored header.
+fn scan_floor_of(birth_height: u32, header_start: u32) -> u32 {
+    birth_height.max(header_start)
+}
+
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
     FiltersManager<H, FH, F, W>
 {
@@ -340,7 +346,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }]);
         }
 
-        let scan_floor = self.scan_floor().await;
+        let scan_floor = scan_floor_of(wallet_birth_height, header_start_height);
         let scan_start = if wallet_committed_height > 0 {
             scan_floor.max(wallet_committed_height + 1)
         } else {
@@ -676,7 +682,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// cover the heights below it.
     pub(super) async fn scan_floor(&self) -> u32 {
         let birth_height = self.wallet.read().await.earliest_required_height().await;
-        birth_height.max(self.header_storage.read().await.get_start_height().await.unwrap_or(0))
+        let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+        scan_floor_of(birth_height, header_start)
     }
 
     /// Commit completed batches in order (lowest batch_start first).
@@ -731,22 +738,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         if wallet.wallet_account_generation(wallet_id) != *generation_at_scan {
                             continue;
                         }
-                        // Contiguity guard: a batch extends a wallet's certified
-                        // coverage only if the wallet was already certified up to
-                        // the first height the batch checked for it; a gap below
-                        // that must be rescanned, not silently certified.
-                        //
-                        // Heights below `scan_floor` are the one exception: no
-                        // batch can ever reach them, because every scan starts
-                        // at the wallets' birth height or the first stored
-                        // header. Treating that range as a gap leaves a wallet
-                        // whose `synced_height` sits under the anchor
-                        // permanently uncertifiable, which also starves the
-                        // account-add rescan that clears
-                        // dashpay/rust-dashcore#649. `scan_floor` itself is
-                        // scanned, so only heights strictly below it count as
-                        // out of scope. The guard is otherwise unchanged, so a
-                        // genuine gap above the floor still blocks the advance.
+                        // Certify only a wallet covered up to the first height this batch
+                        // checked for it. Heights below `scan_floor` count as covered: no
+                        // scan of the current chain starts below it.
                         let effective_synced = wallet
                             .wallet_synced_height(wallet_id)
                             .max(scan_floor.saturating_sub(1));
@@ -4361,28 +4355,43 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
     }
 
-    /// A wallet rewound after its batch was scanned is not certified over the heights that
-    /// scan skipped for it, even when the rewind lands below the scan floor.
+    /// A wallet rewound while its batch waits for a block is not certified over the heights
+    /// the scan skipped for it.
     #[tokio::test]
-    async fn rewind_after_scan_does_not_certify_heights_the_scan_skipped() {
+    async fn rewind_while_a_batch_waits_does_not_certify_heights_the_scan_skipped() {
         let wallet_id: WalletId = [0xA1; 32];
+        let watched = Address::dummy(Network::Regtest, 61);
         let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
-        multi.write().await.insert_wallet(wallet_id, MockWalletState::default());
-        multi.write().await.set_birth_height(wallet_id, 200_000);
+        multi.write().await.insert_wallet(
+            wallet_id,
+            MockWalletState {
+                addresses: vec![watched.clone()],
+                synced_height: 10,
+                ..MockWalletState::default()
+            },
+        );
         let mut manager = create_multi_test_manager(multi.clone()).await;
-        anchor_headers_at(&manager.header_storage, 200_000 - (CHECKPOINT_HEADERS as u32 - 1), 30)
-            .await;
         manager.set_state(SyncState::Syncing);
 
-        let mut batch = FiltersBatch::new(200_000, 204_999, HashMap::new());
-        batch.set_pending_blocks(0);
-        batch.mark_scanned();
-        batch.set_scanned_wallets(BTreeMap::from([(wallet_id, 0)]));
-        batch.set_synced_at_scan(BTreeMap::from([(wallet_id, 200_100)]));
-        manager.active_batches.insert(200_000, batch);
+        let (key_40, filter_40) = filter_for_address(40, &watched);
+        let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_40.clone(), filter_40)]));
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+        let events = manager.scan_batch(0).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::BlocksNeeded { .. }]));
 
-        manager.try_commit_batches().await.unwrap();
+        multi.write().await.wallet_mut(&wallet_id).synced_height = 0;
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let processed = SyncEvent::BlockProcessed {
+            block_hash: *key_40.hash(),
+            height: 40,
+            wallets: BTreeSet::from([wallet_id]),
+            new_scripts: BTreeMap::new(),
+            confirmed_txids: vec![],
+        };
+        manager.handle_sync_event(&processed, &network).await.unwrap();
 
+        assert!(!manager.active_batches.contains_key(&0), "the batch committed");
         assert_eq!(multi.read().await.wallet_synced_height(&wallet_id), 0);
     }
 

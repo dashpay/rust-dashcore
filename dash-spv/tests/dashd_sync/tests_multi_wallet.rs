@@ -730,11 +730,7 @@ async fn test_rescan_below_birth_of_a_wallet_born_at_the_anchor() {
 
     wallet.write().await.get_wallet_info_mut(&wallet_id).unwrap().update_synced_height(0);
     wait_for_wallet_synced(&wallet, &wallet_id, height).await;
-
-    let progress = handle.client.progress().await;
-    let filters = progress.filters().unwrap();
-    assert_eq!(filters.state(), SyncState::Synced);
-    assert_eq!(filters.committed_height(), height);
+    wait_for_sync(&mut handle.progress_receiver, height).await;
     handle.stop().await;
 }
 
