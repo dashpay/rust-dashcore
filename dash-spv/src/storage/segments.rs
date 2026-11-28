@@ -208,9 +208,7 @@ impl<I: Persistable> SegmentCache<I> {
                 self.segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, _)| *k);
 
             if let Some(key) = key_to_evict {
-                if let Some(segment) = self.segments.get_mut(&key) {
-                    segment.persist(&self.segments_dir).await?;
-                }
+                Self::persist_in_order(&mut self.segments, &self.segments_dir).await?;
                 self.segments.remove(&key);
             }
         }
@@ -489,11 +487,26 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
         let segments_dir = segments_dir.into();
 
-        for (id, segments) in self.segments.iter_mut() {
-            if let Err(e) = segments.persist(&segments_dir).await {
-                tracing::error!("Failed to persist segment with id {id}: {e}");
-            }
+        if let Err(e) = Self::persist_in_order(&mut self.segments, &segments_dir).await {
+            tracing::error!("Failed to persist segments in {segments_dir:?}: {e}");
         }
+    }
+
+    /// Persists the segments by ascending id and stops at the first failure.
+    ///
+    /// A crash or failed write then never leaves a segment on disk above an unwritten one.
+    async fn persist_in_order(
+        segments: &mut HashMap<u32, Segment<I>>,
+        segments_dir: &Path,
+    ) -> StorageResult<()> {
+        let mut segments: Vec<_> = segments.iter_mut().collect();
+        segments.sort_unstable_by_key(|(id, _)| **id);
+
+        for (_, segment) in segments {
+            segment.persist(segments_dir).await?;
+        }
+
+        Ok(())
     }
 
     async fn remove_segment(&mut self, id: u32) -> StorageResult<()> {
@@ -691,6 +704,8 @@ impl<I: Persistable> Segment<I> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -1228,6 +1243,21 @@ mod tests {
         let reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         assert_eq!(reloaded.tip_height(), None);
         assert_eq!(reloaded.start_height(), None);
+    }
+
+    #[tokio::test]
+    async fn test_persist_stops_at_first_failed_segment() {
+        let tmp_dir = TempDir::new().unwrap();
+        let items = FilterHeader::dummy_batch(0..FilterHeader::ITEMS_PER_SEGMENT + 10);
+
+        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
+        cache.store_items_at_height(&items, 0).await.unwrap();
+
+        // A directory at the segment 0 path makes its write fail.
+        fs::create_dir(tmp_dir.path().join(FilterHeader::segment_file_name(0))).unwrap();
+        cache.persist(tmp_dir.path()).await;
+
+        assert!(!tmp_dir.path().join(FilterHeader::segment_file_name(1)).exists());
     }
 
     #[test]
