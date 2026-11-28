@@ -209,10 +209,11 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn synced_height(&self) -> CoreBlockHeight;
 
     /// Return the current generation of the wallet's account set — a counter
-    /// bumped on every account addition. Filter-sync layers snapshot it at
-    /// scan time and refuse to certify coverage at commit time when it has
-    /// changed, since the scan did not include the added account's scripts
-    /// (dashpay/rust-dashcore#649). The default (constant `0`) opts an
+    /// bumped on every account addition and every rewind of `synced_height`.
+    /// Filter-sync layers snapshot it at scan time and refuse to certify
+    /// coverage at commit time when it has changed, since the scan did not
+    /// include the added account's scripts or skipped the heights the rewind
+    /// reopened (dashpay/rust-dashcore#649). The default (constant `0`) opts an
     /// implementation out of the check.
     fn account_generation(&self) -> u64 {
         0
@@ -561,6 +562,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_synced_height(&mut self, current_height: u32) {
+        if current_height < self.metadata.synced_height {
+            self.account_generation += 1;
+        }
         self.metadata.synced_height = current_height;
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
@@ -618,7 +622,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
             }
         }
 
-        self.metadata.synced_height = self.metadata.synced_height.min(height);
+        if height < self.metadata.synced_height {
+            self.account_generation += 1;
+            self.metadata.synced_height = height;
+        }
         self.metadata.last_processed_height = self.metadata.last_processed_height.min(height);
         self.update_balance();
 

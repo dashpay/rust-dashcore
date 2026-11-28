@@ -721,8 +721,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         // matter where the account-add rewind left the
                         // checkpoint (below the batch, inside its range, or
                         // unmoved because it already sat at the birth floor).
-                        // The wallet stays behind and the tick rescan picks it
-                        // up (dashpay/rust-dashcore#649).
+                        // A rewind of `synced_height` bumps the generation too:
+                        // the scan skipped the heights it reopened. The wallet
+                        // stays behind and the tick rescan picks it up
+                        // (dashpay/rust-dashcore#649).
                         if wallet.wallet_account_generation(wallet_id) != *generation_at_scan {
                             continue;
                         }
@@ -1362,9 +1364,13 @@ mod tests {
     use dashcore::network::message_filter::CFilter;
     use dashcore::{Address, Header};
     use dashcore::{Block, BlockHash, Network, Transaction};
+    use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+    use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::test_utils::{
-        MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
+        coinjoin_external_addresses, MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
+    use key_wallet_manager::WalletManager;
     use std::net::SocketAddr;
 
     type TestFiltersManager = FiltersManager<
@@ -4321,6 +4327,80 @@ mod tests {
             "the already-synced wallet never regresses"
         );
         assert!(manager.active_batches.is_empty());
+    }
+
+    /// A wallet rewound while its batch waits for a block is not certified over the heights
+    /// the scan skipped for it. Wallet B at 0 starts the batch below wallet A's checkpoint.
+    #[tokio::test]
+    async fn rewind_while_a_batch_waits_does_not_certify_heights_the_scan_skipped() {
+        let mut wm = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
+        let options = WalletAccountCreationOptions::Default;
+        let wallet_a = wm
+            .create_wallet_from_mnemonic(
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                0,
+                options.clone(),
+            )
+            .unwrap();
+        let wallet_b = wm
+            .create_wallet_from_mnemonic(
+                "legal winner thank year wave sausage worth useful legal winner thank yellow",
+                0,
+                options,
+            )
+            .unwrap();
+        wm.update_wallet_synced_height(&wallet_a, 10);
+        let watched = coinjoin_external_addresses(&wm, &wallet_a, 1).remove(0);
+        let wallet = Arc::new(RwLock::new(wm));
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager = FiltersManager::new(
+            Arc::clone(&wallet),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+            0,
+        )
+        .await;
+        let block_40 = Block::dummy(40, vec![Transaction::dummy(&watched, 0..1, &[100_000])]);
+        anchor_headers_at(&manager.header_storage, 0, 101).await;
+        {
+            let mut filter_store = manager.filter_storage.write().await;
+            let empty = BlockFilter::new(&[0; 32]);
+            for height in 0..=100 {
+                let filter = if height == 40 {
+                    BlockFilter::dummy(&block_40)
+                } else {
+                    empty.clone()
+                };
+                filter_store.store_filter(height, &filter.content).await.unwrap();
+            }
+        }
+
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_new_filter_headers(100, &network).await.unwrap();
+        assert!(events.iter().any(|e| matches!(e, SyncEvent::BlocksNeeded { .. })));
+        assert!(manager.active_batches.contains_key(&0), "the batch waits for block 40");
+
+        wallet.write().await.get_wallet_info_mut(&wallet_a).unwrap().update_synced_height(0);
+        let wallets = BTreeSet::from([wallet_a]);
+        let result = wallet
+            .write()
+            .await
+            .process_block_for_wallets(&block_40, block_40.block_hash(), 40, &wallets)
+            .await;
+        let processed = SyncEvent::BlockProcessed {
+            block_hash: block_40.block_hash(),
+            height: 40,
+            wallets,
+            new_scripts: result.new_scripts,
+            confirmed_txids: vec![],
+        };
+        manager.handle_sync_event(&processed, &network).await.unwrap();
+
+        assert!(!manager.active_batches.contains_key(&0), "the batch committed");
+        assert_eq!(wallet.read().await.wallet_synced_height(&wallet_b), 100);
+        assert_eq!(wallet.read().await.wallet_synced_height(&wallet_a), 0);
     }
 
     /// `committed_height = 0` on a fresh manager must not falsely trip the

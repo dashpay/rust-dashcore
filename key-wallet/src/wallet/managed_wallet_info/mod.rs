@@ -132,7 +132,9 @@ pub struct ManagedWalletInfo {
     pub(crate) spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Generation counter for the wallet's account set, bumped every time an
     /// account is added to a live wallet (see
-    /// [`Self::rewind_sync_checkpoint_for_new_account`]).
+    /// [`Self::rewind_sync_checkpoint_for_new_account`]) and every time
+    /// `synced_height` moves down. A scan before a rewind skipped the heights
+    /// the rewind reopened, so it must not certify them either.
     ///
     /// Filter-sync layers snapshot this when they scan a range for the wallet
     /// and compare at commit time: a batch scanned under an older generation
@@ -604,7 +606,8 @@ impl ManagedWalletInfo {
     }
 
     /// Current generation of the wallet's account set; see the
-    /// [`Self::account_generation`] field doc. Bumped on every account add.
+    /// [`Self::account_generation`] field doc. Bumped on every account add and
+    /// every rewind of `synced_height`.
     pub fn account_generation(&self) -> u64 {
         self.account_generation
     }
