@@ -1129,7 +1129,9 @@ pub enum BuilderError {
     CoinSelection(crate::wallet::managed_wallet_info::coin_selection::SelectionError),
     /// Signing was attempted with a watch-only wallet
     WatchOnlyWallet,
-    /// More inputs than fit in a single standard transaction
+    /// More inputs than fit in a single standard transaction.
+    /// The selection strategy may not suit the coins: another one, such as
+    /// `LargestFirst`, can fund the same amount with fewer inputs.
     TooManyInputs {
         count: usize,
         max: usize,
