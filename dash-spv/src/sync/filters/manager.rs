@@ -4356,43 +4356,67 @@ mod tests {
     }
 
     /// A wallet rewound while its batch waits for a block is not certified over the heights
-    /// the scan skipped for it.
+    /// the scan skipped for it. A second wallet further behind makes the download start the
+    /// batch below the first wallet's checkpoint.
     #[tokio::test]
     async fn rewind_while_a_batch_waits_does_not_certify_heights_the_scan_skipped() {
-        let wallet_id: WalletId = [0xA1; 32];
+        let wallet_a: WalletId = [0xA1; 32];
+        let wallet_b: WalletId = [0xB2; 32];
         let watched = Address::dummy(Network::Regtest, 61);
         let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
         multi.write().await.insert_wallet(
-            wallet_id,
+            wallet_a,
             MockWalletState {
                 addresses: vec![watched.clone()],
                 synced_height: 10,
                 ..MockWalletState::default()
             },
         );
+        multi.write().await.insert_wallet(wallet_b, MockWalletState::default());
         let mut manager = create_multi_test_manager(multi.clone()).await;
-        manager.set_state(SyncState::Syncing);
 
-        let (key_40, filter_40) = filter_for_address(40, &watched);
-        let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_40.clone(), filter_40)]));
-        batch.mark_verified();
-        manager.active_batches.insert(0, batch);
-        let events = manager.scan_batch(0).await.unwrap();
-        assert!(matches!(events.as_slice(), [SyncEvent::BlocksNeeded { .. }]));
+        let block_40 = Block::dummy(40, vec![Transaction::dummy(&watched, 0..0, &[40])]);
+        let mut headers = Header::dummy_batch(0..101);
+        headers[40] = block_40.header;
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        {
+            let mut filter_store = manager.filter_storage.write().await;
+            let empty = BlockFilter::new(&[0; 32]);
+            for height in 0..=100 {
+                let filter = if height == 40 {
+                    BlockFilter::dummy(&block_40)
+                } else {
+                    empty.clone()
+                };
+                filter_store.store_filter(height, &filter.content).await.unwrap();
+            }
+        }
 
-        multi.write().await.wallet_mut(&wallet_id).synced_height = 0;
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_new_filter_headers(100, &network).await.unwrap();
+        assert!(events.iter().any(|e| matches!(e, SyncEvent::BlocksNeeded { .. })));
+        assert!(manager.active_batches.contains_key(&0), "the batch waits for block 40");
+
+        // The host rewinds the checkpoint itself; `WalletInterface` only moves it forward.
+        multi.write().await.wallet_mut(&wallet_a).synced_height = 0;
         let processed = SyncEvent::BlockProcessed {
-            block_hash: *key_40.hash(),
+            block_hash: block_40.block_hash(),
             height: 40,
-            wallets: BTreeSet::from([wallet_id]),
+            wallets: BTreeSet::from([wallet_a]),
             new_scripts: BTreeMap::new(),
             confirmed_txids: vec![],
         };
         manager.handle_sync_event(&processed, &network).await.unwrap();
 
         assert!(!manager.active_batches.contains_key(&0), "the batch committed");
-        assert_eq!(multi.read().await.wallet_synced_height(&wallet_id), 0);
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_b), 100);
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 0);
     }
 
     /// `committed_height = 0` on a fresh manager must not falsely trip the
