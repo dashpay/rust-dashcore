@@ -26,7 +26,6 @@ use std::collections::HashSet;
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
 /// Most inputs Dash Core relays in an asset lock (`MAX_STANDARD_ASSET_LOCK_INPUTS`).
-/// Platform applies the same cap in consensus.
 pub const MAX_STANDARD_ASSET_LOCK_INPUTS: usize = 100;
 /// Largest asset lock in bytes that Dash Core relays.
 pub const MAX_STANDARD_ASSET_LOCK_SIZE: usize = 20_480;
